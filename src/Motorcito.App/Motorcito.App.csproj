@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- iOS only for now. Android and Mac Catalyst are deliberately absent
+		     rather than commented out: adding a target is a one-line change,
+		     and carrying targets we never build produces restore failures that
+		     look like real breakage. -->
+		<!-- Pinned to the iOS 26.0 pack rather than the default 26.5 one.
+		     The installed Xcode is 26.4.1; the 26.5 pack demands Xcode 26.6 and
+		     would have us compiling against an SDK that is not present, whereas
+		     the 26.0 pack targets an older API surface that Xcode 26.4 fully
+		     contains. Forward-compatible, so this is the safer mismatch. -->
+		<TargetFrameworks>net10.0-ios26.0</TargetFrameworks>
+
+		<!-- STOPGAP. The Xcode check is an exact major.minor match, so 26.4.1
+		     satisfies neither available pack. Disabling it lets simulator builds
+		     proceed today.
+		     Remove this the moment Xcode 26.6 is installed, then drop the pin
+		     above and go back to plain net10.0-ios. Do not ship a device or
+		     App Store build with this set — an unvalidated Xcode pairing is
+		     exactly the kind of thing that fails at signing or on-device rather
+		     than at compile time. -->
+		<ValidateXcodeVersion>false</ValidateXcodeVersion>
+
+		<OutputType>Exe</OutputType>
+		<RootNamespace>Motorcito.App</RootNamespace>
+		<UseMaui>true</UseMaui>
+		<SingleProject>true</SingleProject>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<MauiXamlInflator>SourceGen</MauiXamlInflator>
+
+		<ApplicationTitle>Motorcito</ApplicationTitle>
+		<ApplicationId>com.motorcito.app</ApplicationId>
+
+		<ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+		<ApplicationVersion>1</ApplicationVersion>
+
+		<!-- ExternalAccessory (the MFi path to the OBDLink MX+) is available
+		     from iOS 15 onward; nothing here needs a newer floor. -->
+		<SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#1B4332" />
+		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#1B4332" BaseSize="128,128" />
+
+		<MauiImage Include="Resources\Images\*" />
+		<MauiFont Include="Resources\Fonts\*" />
+		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Motorcito.Obd\Motorcito.Obd.csproj" />
+	</ItemGroup>
+
+</Project>

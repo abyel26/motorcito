@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>XSAppIconAssets</key>
+	<string>Assets.xcassets/appicon.appiconset</string>
+
+	<!-- MFi accessory protocol. Without this key the OBDLink MX+ is invisible
+	     to EAAccessoryManager: iOS only reports accessories whose protocol the
+	     app has declared. App Store review additionally requires that OBDLink
+	     has authorised this bundle id for their protocol. -->
+	<key>UISupportedExternalAccessoryProtocols</key>
+	<array>
+		<string>com.obdlink</string>
+	</array>
+
+	<!-- Keeps the accessory session alive while logging a drive with the screen
+	     off. Without it iOS suspends the app and the trip is cut short. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>external-accessory</string>
+	</array>
+
+	<!-- Altitude is needed to normalise fuel trims (mountain drives otherwise
+	     look like a fault). Coordinates are derived-and-discarded, never
+	     persisted — see the privacy note in ROADMAP.md. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Motorcito records altitude at the start of each drive. Altitude changes shift fuel trims, so without it a mountain drive looks like an engine fault. Your location is never stored.</string>
+</dict>
+</plist>

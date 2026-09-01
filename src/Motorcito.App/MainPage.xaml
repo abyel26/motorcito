@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:Motorcito.App"
+             x:Class="Motorcito.App.MainPage"
+             x:DataType="local:LiveDataViewModel"
+             Title="Motorcito"
+             BackgroundColor="#0E1512">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="14">
+
+            <!-- Connection -->
+            <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="CONNECTION" FontSize="11" TextColor="#6E8B7E" CharacterSpacing="1.5" />
+
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="3">
+                        <Label Grid.Row="0" Grid.Column="0" Text="Status" TextColor="#8FA99A" FontSize="13" />
+                        <Label Grid.Row="0" Grid.Column="1" Text="{Binding Status}" TextColor="White" FontSize="13" />
+
+                        <Label Grid.Row="1" Grid.Column="0" Text="Adapter" TextColor="#8FA99A" FontSize="13" />
+                        <Label Grid.Row="1" Grid.Column="1" Text="{Binding AdapterName}" TextColor="White" FontSize="13" />
+
+                        <Label Grid.Row="2" Grid.Column="0" Text="Rate" TextColor="#8FA99A" FontSize="13" />
+                        <Label Grid.Row="2" Grid.Column="1" Text="{Binding SampleRate}" TextColor="White" FontSize="13" />
+                    </Grid>
+
+                    <HorizontalStackLayout Spacing="10">
+                        <Button x:Name="ConnectBtn" Text="Connect" Clicked="OnConnectClicked"
+                                BackgroundColor="#2D6A4F" TextColor="White" CornerRadius="8"
+                                HeightRequest="40" WidthRequest="120" FontSize="14" />
+                        <Button x:Name="DisconnectBtn" Text="Disconnect" Clicked="OnDisconnectClicked"
+                                BackgroundColor="#3A2A2A" TextColor="#E8C7C7" CornerRadius="8"
+                                HeightRequest="40" WidthRequest="120" FontSize="14" />
+                    </HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Phase 0 gate: the actual current milestone -->
+            <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="6">
+                    <Label Text="PHASE 0 GATE" FontSize="11" TextColor="#6E8B7E" CharacterSpacing="1.5" />
+                    <Label Text="{Binding GateVerdict}" TextColor="{Binding GateColor}" FontSize="14" />
+                    <Label Text="{Binding CapabilitySummary}" TextColor="#8FA99A" FontSize="12" />
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Vehicle -->
+            <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+                    <Label Grid.Row="0" Grid.ColumnSpan="2" Text="VEHICLE" FontSize="11"
+                           TextColor="#6E8B7E" CharacterSpacing="1.5" Margin="0,0,0,4" />
+
+                    <Label Grid.Row="1" Grid.Column="0" Text="VIN" TextColor="#8FA99A" FontSize="13" />
+                    <Label Grid.Row="1" Grid.Column="1" Text="{Binding Vin}" TextColor="White" FontSize="13" />
+
+                    <Label Grid.Row="2" Grid.Column="0" Text="Codes" TextColor="#8FA99A" FontSize="13" />
+                    <Label Grid.Row="2" Grid.Column="1" Text="{Binding DtcSummary}" TextColor="White" FontSize="13" />
+                </Grid>
+            </Border>
+
+            <!-- Live gauges. Numeric readouts by design: ROADMAP Phase 1 says
+                 prove the hardware path first, make it pretty later. -->
+            <Label Text="LIVE DATA" FontSize="11" TextColor="#6E8B7E" CharacterSpacing="1.5" Margin="4,4,0,0" />
+
+            <CollectionView ItemsSource="{Binding Gauges}">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="local:GaugeItem">
+                        <Grid ColumnDefinitions="*,Auto" Padding="14,10" ColumnSpacing="10">
+                            <Label Grid.Column="0" Text="{Binding Name}" TextColor="#C8DCD0" FontSize="14"
+                                   VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding Value}" TextColor="White" FontSize="17"
+                                   FontAttributes="Bold" VerticalOptions="Center" />
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+        </VerticalStackLayout>
+    </ScrollView>
+
+</ContentPage>
