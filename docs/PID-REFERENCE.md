@@ -20,7 +20,7 @@ Response echoes mode+0x40 then the PID then data bytes: `410C1AF8`
 - `41` = mode 01 response
 - `0C` = PID
 - `1AF8` = data bytes A=0x1A, B=0xF8
-- RPM = (256×26 + 248) / 4 = **1728 rpm**
+- RPM = (256×26 + 248) / 4 = 6904 / 4 = **1726 rpm**
 
 ## Junk the parser must handle
 

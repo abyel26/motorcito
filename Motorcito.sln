@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6286001E-7285-4CE1-B829-E234680CE0FD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Motorcito.Obd", "src\Motorcito.Obd\Motorcito.Obd.csproj", "{B6CC81CE-A6A2-4508-B536-0D647488B0AC}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{6D8F76E7-A299-466C-B2EF-5B7EBCCBAB78}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Motorcito.Obd.Tests", "tests\Motorcito.Obd.Tests\Motorcito.Obd.Tests.csproj", "{05F44B6B-FC36-411A-8AAB-9FC832DDC5AF}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B6CC81CE-A6A2-4508-B536-0D647488B0AC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B6CC81CE-A6A2-4508-B536-0D647488B0AC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B6CC81CE-A6A2-4508-B536-0D647488B0AC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B6CC81CE-A6A2-4508-B536-0D647488B0AC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{05F44B6B-FC36-411A-8AAB-9FC832DDC5AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{05F44B6B-FC36-411A-8AAB-9FC832DDC5AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{05F44B6B-FC36-411A-8AAB-9FC832DDC5AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{05F44B6B-FC36-411A-8AAB-9FC832DDC5AF}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{B6CC81CE-A6A2-4508-B536-0D647488B0AC} = {6286001E-7285-4CE1-B829-E234680CE0FD}
+		{05F44B6B-FC36-411A-8AAB-9FC832DDC5AF} = {6D8F76E7-A299-466C-B2EF-5B7EBCCBAB78}
+	EndGlobalSection
+EndGlobal
