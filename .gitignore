@@ -1,0 +1,54 @@
+# ── macOS ──
+.DS_Store
+._*
+
+# ── .NET / MAUI ──
+bin/
+obj/
+*.user
+*.userosscache
+*.suo
+*.csproj.user
+.vs/
+artifacts/
+
+# ── Xcode / Swift ──
+DerivedData/
+build/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.moved-aside
+.swiftpm/
+Packages/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# ── Azure Functions ──
+local.settings.json
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+bin/
+obj/
+
+# ── Secrets & local config ──
+*.pem
+*.p12
+*.mobileprovision
+.env
+.env.local
+appsettings.Development.json
+
+# ── Data / captures (never commit vehicle data) ──
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.parquet
+captures/
+logs/
