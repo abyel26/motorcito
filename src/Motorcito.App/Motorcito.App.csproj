@@ -32,7 +32,9 @@
 		<MauiXamlInflator>SourceGen</MauiXamlInflator>
 
 		<ApplicationTitle>Motorcito</ApplicationTitle>
-		<ApplicationId>com.motorcito.app</ApplicationId>
+		<!-- Must match PRODUCT_BUNDLE_IDENTIFIER in the Xcode project used to
+		     generate the provisioning profile, or device builds fail to find it. -->
+		<ApplicationId>com.abyel26.motorcito</ApplicationId>
 
 		<ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
 		<ApplicationVersion>1</ApplicationVersion>
