@@ -86,9 +86,15 @@ public sealed class SimulatedObdAdapter : IObdAdapter
         _storedDtcs = storedDtcs?.ToList() ?? [];
 
         // Default to a well-equipped modern car: everything the registry knows,
-        // minus bank-2 trims (inline engine) and oil temp.
+        // minus bank-2 trims (inline engine).
+        //
+        // Oil temp (0x5C) used to be excluded here too, which meant the one
+        // parameter the app most wants to show could never be seen without a
+        // real car. Cars that report it exist and are the interesting case, so
+        // the default profile now includes it; pass supportedPids explicitly to
+        // simulate a car that does not.
         _supported = supportedPids?.ToHashSet()
-            ?? PidRegistry.All.Select(d => d.Pid).Where(p => p is not (0x08 or 0x09 or 0x5C)).ToHashSet();
+            ?? PidRegistry.All.Select(d => d.Pid).Where(p => p is not (0x08 or 0x09)).ToHashSet();
     }
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
@@ -243,7 +249,11 @@ public sealed class SimulatedObdAdapter : IObdAdapter
             0x43 => 30 + 20 * Math.Abs(phase),                         // absolute load %
             0x44 => 1.0,                                               // lambda
             0x46 => 22,                                                // ambient °C
-            0x5C => 95,                                                // oil temp °C
+            // Oil warms more slowly than coolant and settles hotter. Modelling
+            // that rather than a constant makes the gauge move during a demo,
+            // and the lag is real: oil temp trailing coolant on a cold start is
+            // what a healthy engine looks like.
+            0x5C => Math.Min(102, 20 + elapsed * 0.42),                // oil temp °C
             0x5E => 3 + 4 * Math.Abs(phase),                           // fuel rate L/h
             _ => 0
         };

@@ -1,12 +1,13 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Motorcito.App.Controls;
 using Motorcito.Data;
 using Motorcito.Obd;
 
 namespace Motorcito.App;
 
-/// <summary>One gauge row: a parameter name and its current formatted value.</summary>
+/// <summary>One parameter on the dashboard: its identity, its display range, and its current reading.</summary>
 public sealed class GaugeItem : INotifyPropertyChanged
 {
     private string _value = "—";
@@ -15,6 +16,29 @@ public sealed class GaugeItem : INotifyPropertyChanged
     public required string Name { get; init; }
     public required string Unit { get; init; }
 
+    /// <summary>Short enough to fit under a gauge. From <see cref="GaugeStyles"/>.</summary>
+    public required string ShortLabel { get; init; }
+    public required double Min { get; init; }
+    public required double Max { get; init; }
+    public double? Warn { get; init; }
+    public double? Redline { get; init; }
+    public int Decimals { get; init; }
+    public double TimeConstant { get; init; }
+
+    /// <summary>
+    /// The latest numeric reading, or null before the first one.
+    ///
+    /// A plain property with no change notification, on purpose: this is
+    /// <em>polled</em> by the render ticker rather than pushed. Raising an event
+    /// per gauge per snapshot — up to 20 times a second — is the cost this
+    /// design exists to avoid.
+    /// </summary>
+    public double? Numeric { get; set; }
+
+    /// <summary>True when the PID was absent from the most recent snapshot.</summary>
+    public bool IsStale { get; set; }
+
+    /// <summary>Formatted for the compact list. Refreshed well below the frame rate.</summary>
     public string Value
     {
         get => _value;
@@ -56,6 +80,7 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
     private string _tripStatus = "Not recording";
     private string _diagnosticSummary = "—";
     private bool _isBusy;
+    private ObdSnapshot? _latest;
 
     public ObservableCollection<GaugeItem> Gauges { get; } = [];
 
@@ -187,8 +212,14 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
 
         await _adapter.DisconnectAsync();
         Gauges.Clear();
+
+        // Drop the last snapshot too, or the render ticker keeps pumping a
+        // disconnected car's final readings into the gauges.
+        Volatile.Write(ref _latest, null);
+
         SampleRate = "—";
         OnPropertyChanged(nameof(IsConnected));
+        NotifyHeroAvailability();
     }
 
     /// <summary>
@@ -374,14 +405,49 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
         Gauges.Clear();
         foreach (var def in supported.KnownSupported().OrderBy(d => d.Poll).ThenBy(d => d.Pid))
         {
+            var style = GaugeStyles.For(def);
+
             Gauges.Add(new GaugeItem
             {
                 Pid = def.Pid,
                 Name = def.Name,
-                Unit = def.Unit
+                Unit = def.Unit,
+                ShortLabel = style.ShortLabel,
+                Min = style.Min,
+                Max = style.Max,
+                Warn = style.Warn,
+                Redline = style.Redline,
+                Decimals = style.Decimals,
+                TimeConstant = style.TimeConstant
             });
         }
+
+        NotifyHeroAvailability();
     }
+
+    /// <summary>
+    /// The hero gauges are declared in XAML but shown only if this car actually
+    /// reports them, so an absent parameter reflows the row rather than leaving
+    /// a dead dial on screen.
+    /// </summary>
+    private void NotifyHeroAvailability()
+    {
+        OnPropertyChanged(nameof(HasRpm));
+        OnPropertyChanged(nameof(HasSpeed));
+        OnPropertyChanged(nameof(HasCoolant));
+        OnPropertyChanged(nameof(HasOilTemp));
+    }
+
+    public bool HasRpm => GaugeFor(0x0C) is not null;
+    public bool HasSpeed => GaugeFor(0x0D) is not null;
+    public bool HasCoolant => GaugeFor(0x05) is not null;
+
+    /// <summary>
+    /// PID 0x5C. Decoded by the registry but not reported by every car — the
+    /// simulator's default profile omits it, and whether the Miata offers it is
+    /// a question for its own capability scan.
+    /// </summary>
+    public bool HasOilTemp => GaugeFor(0x5C) is not null;
 
     private void OnSnapshot(object? sender, ObdSnapshot snapshot)
     {
@@ -390,19 +456,79 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
         // write must never stutter the gauges.
         _logging.Record(snapshot);
 
-        MainThread.BeginInvokeOnMainThread(() =>
+        // Deliberately does not touch the UI. The poller produces 5–20
+        // snapshots a second; dispatching each one to the main thread and
+        // walking every gauge was affordable for a list of labels, but not once
+        // each gauge also wants to redraw. The page pulls from Latest at a
+        // fixed frame rate instead — see MainPage.OnTick.
+        //
+        // Safe to publish from this thread: ObdSnapshot is an immutable record
+        // over an already-copied dictionary, so this is a reference swap.
+        Volatile.Write(ref _latest, snapshot);
+    }
+
+    /// <summary>
+    /// The most recent poll cycle, or null before the first one. Readable from
+    /// any thread.
+    /// </summary>
+    public ObdSnapshot? Latest => Volatile.Read(ref _latest);
+
+    /// <summary>
+    /// Pushes the latest readings into the gauge models. Called by the page's
+    /// render ticker, on the main thread.
+    /// </summary>
+    /// <param name="refreshText">
+    /// Whether to rebuild the formatted strings for the compact list. Those are
+    /// throttled well below the frame rate: numerals changing 60 times a second
+    /// are unreadable, and each one costs a string allocation and a layout pass.
+    /// </param>
+    public void PumpGauges(bool refreshText)
+    {
+        var snapshot = Latest;
+        if (snapshot is null)
+            return;
+
+        foreach (var gauge in Gauges)
         {
-            foreach (var gauge in Gauges)
+            if (snapshot.Readings.TryGetValue(gauge.Pid, out var reading))
             {
-                gauge.Value = snapshot.Readings.TryGetValue(gauge.Pid, out var reading)
-                    ? $"{reading.Value:0.##} {reading.Unit}"
-                    : "—";
+                gauge.Numeric = reading.Value;
+                gauge.IsStale = false;
+            }
+            else
+            {
+                // Hold the last reading. A cheap adapter drops frames
+                // constantly, and a gauge falling to zero every few seconds
+                // looks like a fault in the app.
+                gauge.IsStale = true;
             }
 
+            if (refreshText)
+            {
+                gauge.Value = gauge.Numeric is { } v
+                    ? $"{v:0.##} {gauge.Unit}"
+                    : "—";
+            }
+        }
+
+        if (refreshText)
+        {
             SampleRate = snapshot.SamplesPerSecond > 0
                 ? $"{snapshot.SamplesPerSecond:0.#} reads/s"
                 : "measuring…";
-        });
+        }
+    }
+
+    /// <summary>The gauge for a PID, or null if this car does not report it.</summary>
+    public GaugeItem? GaugeFor(byte pid)
+    {
+        foreach (var gauge in Gauges)
+        {
+            if (gauge.Pid == pid)
+                return gauge;
+        }
+
+        return null;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
