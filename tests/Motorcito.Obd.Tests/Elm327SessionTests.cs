@@ -175,3 +175,107 @@ public class Elm327SessionTests
             states);
     }
 }
+
+/// <summary>
+/// An adapter that makes the first bus request slow, as a real car does while
+/// the ELM327 searches protocols after ATSP0.
+/// </summary>
+internal sealed class SlowNegotiatingAdapter : IObdAdapter
+{
+    private readonly TimeSpan _negotiationTime;
+    private bool _negotiated;
+
+    public SlowNegotiatingAdapter(TimeSpan negotiationTime) => _negotiationTime = negotiationTime;
+
+    public string Name => "Slow negotiator";
+    public ObdConnectionState State { get; private set; } = ObdConnectionState.Disconnected;
+    public event EventHandler<ObdConnectionState>? StateChanged;
+
+    /// <summary>Timeout the caller allowed for the first bus request.</summary>
+    public TimeSpan FirstRequestBudget { get; private set; }
+
+    public Task ConnectAsync(CancellationToken cancellationToken = default)
+    {
+        State = ObdConnectionState.Connected;
+        StateChanged?.Invoke(this, State);
+        return Task.CompletedTask;
+    }
+
+    public async Task<string> SendCommandAsync(string command, TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        await Task.Yield();
+
+        if (command.StartsWith("AT", StringComparison.Ordinal))
+            return "OK";
+
+        if (!_negotiated)
+        {
+            FirstRequestBudget = timeout;
+
+            // The caller's budget decides whether a real car would have been
+            // given enough time to finish its protocol search.
+            if (timeout < _negotiationTime)
+                throw new ObdTimeoutException(command, timeout);
+
+            _negotiated = true;
+        }
+
+        return command switch
+        {
+            "0100" => "41 00 BE 3E B8 11",
+            "010C" => "41 0C 1A F8",
+            _ => "NO DATA"
+        };
+    }
+
+    public Task DisconnectAsync()
+    {
+        State = ObdConnectionState.Disconnected;
+        return Task.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+public class ProtocolNegotiationTests
+{
+    [Fact]
+    public async Task The_first_bus_request_is_given_time_to_negotiate()
+    {
+        // Reproduces a real failure: on a healthy car the capability scan
+        // reported no PIDs at all, because ATSP0 only selects auto-detection
+        // and the actual protocol search happens on the first 0100 — which was
+        // being judged by the 1.5 s steady-state timeout.
+        await using var adapter = new SlowNegotiatingAdapter(TimeSpan.FromSeconds(8));
+        await adapter.ConnectAsync();
+
+        var session = new Elm327Session(adapter, new Elm327Options { RetryDelay = TimeSpan.Zero });
+        await session.InitializeAsync();
+
+        var supported = await session.ScanSupportedPidsAsync();
+
+        Assert.True(adapter.FirstRequestBudget >= TimeSpan.FromSeconds(8),
+            $"first request was only allowed {adapter.FirstRequestBudget.TotalSeconds:0.#} s");
+        Assert.NotEmpty(supported.Pids);
+        Assert.False(supported.EvaluatePhaseZeroGate().ScanLooksImplausible);
+    }
+
+    [Fact]
+    public async Task Steady_state_reads_keep_the_short_timeout()
+    {
+        // The long budget must apply only until the bus answers. Otherwise a
+        // PID the ECU ignores would cost fifteen seconds on every cycle.
+        await using var adapter = new SlowNegotiatingAdapter(TimeSpan.FromSeconds(1));
+        await adapter.ConnectAsync();
+
+        var options = new Elm327Options { RetryDelay = TimeSpan.Zero };
+        var session = new Elm327Session(adapter, options);
+        await session.InitializeAsync();
+        await session.ScanSupportedPidsAsync();
+
+        var before = adapter.FirstRequestBudget;
+        await session.ReadAsync(PidRegistry.Find(0x0C)!);
+
+        Assert.Equal(options.FirstRequestTimeout, before);
+    }
+}

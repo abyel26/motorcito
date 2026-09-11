@@ -4,7 +4,7 @@ namespace Motorcito.Data;
 
 public sealed class TripRecorderOptions
 {
-    /// <summary>Rows accumulated before a write. CLAUDE.md fixes this range at 100–500.</summary>
+    /// <summary>Rows accumulated before a write. Kept in the 100–500 range.</summary>
     public int BatchSize { get; init; } = 200;
 
     /// <summary>
@@ -57,6 +57,7 @@ public sealed class TripRecorder
     private readonly TripRepository _trips;
     private readonly SampleRepository _samples;
     private readonly TripRecorderOptions _options;
+    private readonly IAltitudeProvider _altitude;
     private readonly List<Sample> _pending = [];
     private readonly object _lock = new();
 
@@ -85,13 +86,15 @@ public sealed class TripRecorder
         SampleRepository samples,
         string userId,
         string vehicleId,
-        TripRecorderOptions? options = null)
+        TripRecorderOptions? options = null,
+        IAltitudeProvider? altitude = null)
     {
         _trips = trips;
         _samples = samples;
         UserId = userId;
         VehicleId = vehicleId;
         _options = options ?? new TripRecorderOptions();
+        _altitude = altitude ?? NullAltitudeProvider.Instance;
         Buffer = new RollingSampleBuffer(_options.BufferWindow);
     }
 
@@ -198,6 +201,13 @@ public sealed class TripRecorder
             // IAT before the engine warms the intake is the best available
             // ambient reading; PID 46 is preferred when the car reports it.
             AmbientTempC = snapshot.Value(0x46) ?? snapshot.Value(0x0F),
+
+            // Altitude at trip start only, per the schema. A drive that climbs
+            // significantly will therefore be banded by where it began, which
+            // is a known limitation: correcting it properly would need altitude
+            // per sample. Recorded now regardless, because a trip logged
+            // without it can never be normalised retroactively.
+            StartAltitudeM = _altitude.LastKnownAltitudeM,
             // Evaluated once, at trip start. A consequence of the long
             // IdleBeforeTripEnd is that two short errands can merge into one
             // trip; the merged trip then inherits the first segment's

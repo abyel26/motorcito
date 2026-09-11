@@ -135,10 +135,46 @@ public static class Migrations
             queue_id      INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_type   TEXT NOT NULL,
             entity_id     TEXT NOT NULL,
+            user_id       TEXT NOT NULL,
             attempts      INTEGER NOT NULL DEFAULT 0,
             last_attempt  TEXT,
             last_error    TEXT
         );
+
+        CREATE INDEX idx_sync_queue_user ON sync_queue(user_id);
+        """,
+
+        // ---- v2: raw adapter exchange log ----
+        //
+        // A genuine migration rather than an edit to v1: a device is already
+        // carrying a v1 database with real driving data, so v1 is now shipped
+        // and immutable.
+        //
+        // Exists because the rest of the schema stores *decoded* values. When a
+        // reply fails to parse there is no row, no error and nothing to
+        // inspect — a VIN that would not decode left no trace at all, and the
+        // cause had to be guessed at from source code instead of read from the
+        // car's own bytes.
+        //
+        // vehicle_id is nullable: the most diagnostically valuable exchanges —
+        // the init sequence, the capability scan, the VIN read itself — all
+        // happen before the vehicle has been identified.
+        """
+        CREATE TABLE obd_log (
+            log_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       TEXT NOT NULL,
+            vehicle_id    TEXT,
+            session_id    TEXT NOT NULL,
+            ts            TEXT NOT NULL,
+            command       TEXT NOT NULL,
+            raw_response  TEXT,
+            status        TEXT,
+            duration_ms   INTEGER,
+            error         TEXT
+        );
+
+        CREATE INDEX idx_obd_log_session ON obd_log(session_id, ts);
+        CREATE INDEX idx_obd_log_command ON obd_log(command);
         """,
     ];
 

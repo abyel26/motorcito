@@ -52,6 +52,38 @@ public sealed class VehicleRepository
         return vehicle with { VehicleId = id };
     }
 
+    /// <summary>
+    /// Resolves the vehicle for a freshly connected car, creating it on first sight.
+    ///
+    /// Identity is the whole problem here. Baselines accumulate per vehicle over
+    /// months, so a car that resolves to a new row on each connection would
+    /// silently reset its own history and never reach the sufficiency gate.
+    ///
+    /// With a VIN, that VIN is the identity. Without one — the ECU refused
+    /// Mode 09, or the adapter garbled it — falling back to a fresh id would
+    /// produce exactly that fragmentation, so a single stable placeholder row is
+    /// reused instead. The consequence is that two VIN-less cars on one phone
+    /// would share a row; that is the lesser evil, and it corrects itself as
+    /// soon as either reports a VIN.
+    /// </summary>
+    public Vehicle ResolveOrCreate(string userId, string? vin, string? supportedPidsJson)
+    {
+        var vehicleId = vin is not null
+            ? FindIdByVin(vin, userId) ?? Guid.NewGuid().ToString("N")
+            : VinlessVehicleId;
+
+        return Upsert(new Vehicle
+        {
+            VehicleId = vehicleId,
+            UserId = userId,
+            Vin = vin,
+            SupportedPidsJson = supportedPidsJson
+        });
+    }
+
+    /// <summary>Stable id used when no VIN is available, so trips still accumulate against one car.</summary>
+    public const string VinlessVehicleId = "vehicle-without-vin";
+
     public string? FindIdByVin(string vin, string userId)
     {
         using var command = _db.CreateCommand("SELECT vehicle_id FROM vehicles WHERE vin = $vin AND user_id = $user LIMIT 1;");

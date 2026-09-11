@@ -52,3 +52,8 @@ appsettings.Development.json
 *.parquet
 captures/
 logs/
+
+# Local agent tooling config
+.claude/
+AGENTS.md
+CLAUDE.md

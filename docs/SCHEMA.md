@@ -187,6 +187,7 @@ CREATE TABLE sync_queue (
     queue_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type   TEXT NOT NULL,   -- 'trip' | 'event'
     entity_id     TEXT NOT NULL,
+    user_id       TEXT NOT NULL,
     attempts      INTEGER NOT NULL DEFAULT 0,
     last_attempt  TEXT,
     last_error    TEXT
@@ -194,6 +195,8 @@ CREATE TABLE sync_queue (
 ```
 
 Upload on WiFi. Retry with backoff. Mark `synced = 1` on the source row only after confirmation.
+
+`user_id` is here for the same reason it is on every other table. Without it, erasing a user would mean resolving each queued `entity_id` back to its owner through tables that the erasure had already emptied — so queued rows would survive a deletion request.
 
 ---
 
@@ -211,6 +214,32 @@ You will find a parser bug and need to reprocess. Raw history is unrecoverable i
 
 ## Retention
 
-At 1 Hz with 10 PIDs, roughly 130 MB/year per vehicle. No retention policy needed for years.
+At 1 Hz with 10 PIDs, roughly 130 MB/year per vehicle. **Storage is not the constraint** — that much is affordable for years.
 
-If the device ever runs tight: downsample samples older than 6 months to 0.2 Hz on the phone, keeping full resolution in Blob. Never downsample event windows.
+**Necessity is the constraint.** Once data is synced it is personal data, and GDPR's storage-limitation principle asks how long it is needed for the stated purpose, not how long it fits. "We had the disk space" is not an answer. So retention is a decision about what the analysis actually requires:
+
+- **Raw 1 Hz samples** matter while baselines are being established and while a parser bug might mean reprocessing. Past that, the value is mostly in the aggregates already computed from them.
+- **Event windows are never downsampled.** Their whole purpose is showing how conditions developed around a fault at full resolution.
+- **Baselines are small and permanent.** They are the product's memory of the vehicle.
+
+Practical policy: keep raw samples at full resolution for 6 months, then downsample to 0.2 Hz, retaining event windows untouched. This satisfies storage limitation and happens to shrink sync payloads and speed up queries.
+
+If the device runs tight sooner, apply the same downsampling earlier on the phone while keeping full resolution server-side.
+
+---
+
+## Two data tiers
+
+A distinction that must survive into the sync design, because retrofitting it is expensive.
+
+**Tier 1 — the user's data.** Everything in this schema: vehicles, trips, samples, events, baselines, maintenance. Keyed to `user_id`, and therefore personal data. Fully erasable — see `DataErasure.EraseUser`, which is tested to leave nothing behind in any table.
+
+**Tier 2 — the fleet model.** Aggregate statistics that answer "is this normal for a car like yours": distributions per make, model, engine and mileage band. **No `user_id`, no `vehicle_id`, no VIN, no device identifier**, and a minimum cohort size per bucket so no individual can be singled out. Genuinely anonymous, and so outside GDPR.
+
+Why the split matters: **without it, every erasure request damages the analysis model.** With it, a user deletes their tier-1 data in full while the fleet model is untouched, because their contribution was aggregated beyond re-identification the moment it arrived.
+
+### VIN handling
+
+The plaintext VIN is useful on-device — it decodes year, make, model and engine — so it stays in the local `vehicles` table. **Nothing beyond the device needs it.** A VIN identifies a specific vehicle and, through registration and insurance records, its owner.
+
+Anything leaving the device carries `VinHasher.Hash` output instead: an HMAC-SHA256 under a server-held secret. A plain hash would not do — the VIN space is 17 structured characters from a restricted alphabet, small enough to brute-force — so the secret is what makes it non-reversible, and it must never ship in an app binary. The intended flow is that the device sends plaintext over TLS, the server hashes on arrival and discards the original.

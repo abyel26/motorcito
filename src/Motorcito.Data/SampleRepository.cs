@@ -7,7 +7,7 @@ namespace Motorcito.Data;
 ///
 /// Inserts are batched inside a single transaction. At 1 Hz across a one-hour
 /// drive that is 3,600 rows; committing each individually means 3,600 fsyncs
-/// on a phone that is also driving a Bluetooth session. CLAUDE.md fixes the
+/// on a phone that is also driving a Bluetooth session. The batch is held to
 /// batch at 100–500 rows, and <see cref="SampleWriter"/> enforces it.
 /// </summary>
 public sealed class SampleRepository

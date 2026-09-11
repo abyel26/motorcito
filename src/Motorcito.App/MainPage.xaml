@@ -57,7 +57,7 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="12" />
                 </Border.StrokeShape>
-                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
                     <Label Grid.Row="0" Grid.ColumnSpan="2" Text="VEHICLE" FontSize="11"
                            TextColor="#6E8B7E" CharacterSpacing="1.5" Margin="0,0,0,4" />
 
@@ -66,7 +66,62 @@
 
                     <Label Grid.Row="2" Grid.Column="0" Text="Codes" TextColor="#8FA99A" FontSize="13" />
                     <Label Grid.Row="2" Grid.Column="1" Text="{Binding DtcSummary}" TextColor="White" FontSize="13" />
+
+                    <!-- Logging state. Visible because silent data collection that
+                         has quietly stopped is worse than none: a user needs to be
+                         able to tell at a glance that trips are being recorded. -->
+                    <Label Grid.Row="3" Grid.Column="0" Text="Trip" TextColor="#8FA99A" FontSize="13" />
+                    <Label Grid.Row="3" Grid.Column="1" Text="{Binding TripStatus}" TextColor="White" FontSize="13" />
                 </Grid>
+            </Border>
+
+            <!-- Export. Works whether or not an adapter is connected: analysing
+                 last week's drives should not require being sat in the car. -->
+            <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="EXPORT" FontSize="11" TextColor="#6E8B7E" CharacterSpacing="1.5" />
+                    <Label Text="Share the logged data off this device for analysis."
+                           TextColor="#8FA99A" FontSize="12" />
+                    <HorizontalStackLayout Spacing="10">
+                        <Button Text="Database" Clicked="OnExportDatabaseClicked"
+                                BackgroundColor="#1E3A2E" TextColor="White"
+                                CornerRadius="10" Padding="16,10" FontSize="14" />
+                        <Button Text="CSV" Clicked="OnExportCsvClicked"
+                                BackgroundColor="#1E3A2E" TextColor="White"
+                                CornerRadius="10" Padding="16,10" FontSize="14" />
+                    </HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Diagnostics. Records what the adapter actually replied, before
+                 any parsing — the only place a decode bug is still visible,
+                 since the rest of the database stores decoded values only. -->
+            <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="DIAGNOSTICS" FontSize="11" TextColor="#6E8B7E" CharacterSpacing="1.5" />
+                    <Label Text="Raw adapter replies. One-off commands and failures are always kept."
+                           TextColor="#8FA99A" FontSize="12" />
+
+                    <HorizontalStackLayout Spacing="10">
+                        <Switch IsToggled="{Binding VerboseLogging}"
+                                OnColor="#2E7D32" ThumbColor="White" />
+                        <Label Text="Log every exchange" TextColor="White" FontSize="13"
+                               VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+
+                    <Label Text="{Binding DiagnosticSummary}" TextColor="#8FA99A" FontSize="12" />
+
+                    <Button Text="Export adapter log" Clicked="OnExportDiagnosticLogClicked"
+                            BackgroundColor="#1E3A2E" TextColor="White"
+                            CornerRadius="10" Padding="16,10" FontSize="14"
+                            HorizontalOptions="Start" />
+                </VerticalStackLayout>
             </Border>
 
             <!-- Live gauges. Numeric readouts by design: ROADMAP Phase 1 says

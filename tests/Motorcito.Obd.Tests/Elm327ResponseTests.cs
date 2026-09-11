@@ -111,3 +111,63 @@ public class Elm327ResponseTests
         Assert.Equal(Elm327Status.Empty, Elm327Response.Parse("   \r\n  ").Status);
     }
 }
+
+public class MultiFrameTests
+{
+    /// <summary>
+    /// The layout a real CAN vehicle returns for Mode 09 PID 02: an ISO-TP
+    /// total-length line, then indexed frames.
+    /// </summary>
+    private const string RealVinReply = """
+        0902
+        014
+        0: 49 02 01 57 42 53
+        1: 38 4D 39 43 35 30 4A
+        2: 35 4B 31 32 33 34 35
+        """;
+
+    [Fact]
+    public void The_iso_tp_length_line_is_not_treated_as_payload()
+    {
+        var response = Elm327Response.Parse(RealVinReply, "0902");
+
+        // "014" is three characters. Appending it shifts every following byte
+        // by a nibble, which is why a car that answered correctly reported its
+        // VIN as unavailable.
+        Assert.Equal(Elm327Status.Data, response.Status);
+        Assert.StartsWith("490201", response.Payload);
+        Assert.Equal(0, response.Payload.Length % 2);
+    }
+
+    [Fact]
+    public void A_multi_frame_vin_decodes()
+    {
+        var vin = VinDecoder.Decode(Elm327Response.Parse(RealVinReply, "0902"));
+
+        Assert.Equal("WBS8M9C50J5K12345", vin);
+    }
+
+    [Fact]
+    public void A_short_single_frame_payload_is_still_kept()
+    {
+        // The length line is only dropped in replies that actually have frames,
+        // so a genuinely short answer must survive untouched.
+        var response = Elm327Response.Parse("41 0D 3C", "010D");
+
+        Assert.Equal(Elm327Status.Data, response.Status);
+        Assert.Equal("410D3C", response.Payload);
+    }
+
+    [Fact]
+    public void Multi_frame_replies_still_work_without_a_length_line()
+    {
+        // Some adapters omit it; the frames alone must decode.
+        var vin = VinDecoder.Decode(Elm327Response.Parse("""
+            0: 49 02 01 57 42 53
+            1: 38 4D 39 43 35 30 4A
+            2: 35 4B 31 32 33 34 35
+            """, "0902"));
+
+        Assert.Equal("WBS8M9C50J5K12345", vin);
+    }
+}

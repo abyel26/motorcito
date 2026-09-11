@@ -5,7 +5,7 @@ namespace Motorcito.Obd;
 /// <c>0100</c>/<c>0120</c>/<c>0140</c>/<c>0160</c> capability bitmasks.
 ///
 /// Queried at every connection, never cached across vehicles and never assumed.
-/// The gauge layout is built from this — <c>docs/CLAUDE.md</c> rule 4: never
+/// The gauge layout is built from this. Never
 /// assume a PID exists, degrade gracefully, and tell the user what their car
 /// does not report.
 /// </summary>
@@ -23,6 +23,22 @@ public sealed class SupportedPids
 
     /// <summary>The capability-scan commands, in the order they must be issued.</summary>
     public static readonly string[] ScanCommands = ["0100", "0120", "0140", "0160"];
+
+    /// <summary>
+    /// Builds a set directly from known PIDs, bypassing the mask scan.
+    ///
+    /// For rehydrating a scan persisted on a previous connection (see
+    /// <see cref="ToJson"/>) and for tests that need a specific capability set
+    /// without hand-assembling bitmasks. A live connection must always use
+    /// <see cref="AddMask"/> against the car itself — never assume a PID exists.
+    /// </summary>
+    public static SupportedPids FromPids(IEnumerable<byte> pids)
+    {
+        var set = new SupportedPids();
+        foreach (var pid in pids)
+            set._pids.Add(pid);
+        return set;
+    }
 
     /// <summary>
     /// Merges one capability bitmask response into the set.

@@ -73,6 +73,20 @@ public sealed class Elm327Response
         // is not always honoured.
         var lines = raw.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
 
+        // A multi-frame reply is framed by ISO-TP: a line giving the total byte
+        // count, then the frames themselves, each prefixed with an index.
+        //
+        //     014
+        //     0: 49 02 01 57 42 53
+        //     1: 38 4D 39 43 35 30 4A
+        //     2: 35 4B 31 32 33 34 35
+        //
+        // That count is framing, not payload. It is also an odd number of hex
+        // characters, so appending it misaligns every byte that follows by a
+        // nibble and the reply decodes to nonsense — which is what made VIN
+        // reads come back unavailable from a car that answered correctly.
+        var isMultiFrame = lines.Any(LooksLikeFrameIndex);
+
         var payload = new StringBuilder();
         var status = Elm327Status.Empty;
 
@@ -134,8 +148,19 @@ public sealed class Elm327Response
             // prefixed with a frame index and a colon ("0:", "1:") — strip it.
             var body = StripWhitespace(trimmed);
             var colon = body.IndexOf(':');
-            if (colon >= 0 && colon <= 2)
+            var hasFrameIndex = colon >= 0 && colon <= 2;
+
+            if (hasFrameIndex)
+            {
                 body = body[(colon + 1)..];
+            }
+            else if (isMultiFrame && body.Length <= 3)
+            {
+                // The ISO-TP total-length line. Only dropped in a reply that
+                // actually has frames, so a genuine short single-frame payload
+                // is never mistaken for framing.
+                continue;
+            }
 
             if (body.Length > 0 && IsHex(body))
                 payload.Append(body.ToUpperInvariant());
@@ -152,6 +177,17 @@ public sealed class Elm327Response
         }
 
         return Terminal(raw, status);
+    }
+
+    /// <summary>
+    /// Whether a line carries an ISO-TP frame index, as "0:" or "1:".
+    /// </summary>
+    private static bool LooksLikeFrameIndex(string line)
+    {
+        var body = StripWhitespace(line.Trim());
+        var colon = body.IndexOf(':');
+
+        return colon is >= 1 and <= 2 && IsHex(body[..colon]);
     }
 
     /// <summary>

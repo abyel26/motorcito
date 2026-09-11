@@ -8,6 +8,21 @@ public sealed class Elm327Options
     /// <summary>Longer budget for the reset and protocol-detection commands, which genuinely take seconds.</summary>
     public TimeSpan InitTimeout { get; init; } = TimeSpan.FromSeconds(6);
 
+    /// <summary>
+    /// Budget for the first request that actually reaches the vehicle bus.
+    ///
+    /// <c>ATSP0</c> only selects automatic detection; it does not negotiate.
+    /// The adapter tries each protocol in turn on the first real OBD request —
+    /// normally <c>0100</c> — and that search takes seconds, sometimes more
+    /// than ten on a first connection. Judging it by
+    /// <see cref="CommandTimeout"/> makes the capability scan time out on a
+    /// perfectly healthy car and report that no PIDs are supported.
+    ///
+    /// Generous on purpose: this applies once per connection, and only while
+    /// the bus has yet to answer.
+    /// </summary>
+    public TimeSpan FirstRequestTimeout { get; init; } = TimeSpan.FromSeconds(15);
+
     /// <summary>How many times to re-send a command that failed transiently.</summary>
     public int MaxRetries { get; init; } = 2;
 
@@ -26,6 +41,15 @@ public sealed class Elm327Session
 {
     private readonly IObdAdapter _adapter;
     private readonly Elm327Options _options;
+
+    /// <summary>
+    /// Whether the vehicle bus has replied at least once on this session.
+    ///
+    /// Gates the protocol-negotiation timeout allowance: generous until the
+    /// link is proven, tight afterwards so a dead PID cannot cost fifteen
+    /// seconds per read.
+    /// </summary>
+    private bool _busHasAnswered;
 
     public Elm327Session(IObdAdapter adapter, Elm327Options? options = null)
     {
@@ -95,9 +119,15 @@ public sealed class Elm327Session
             if (attempt > 0)
                 await Task.Delay(_options.RetryDelay, ct).ConfigureAwait(false);
 
+            // Until the bus has answered once, allow for protocol negotiation.
+            // ATSP0 selects auto-detection but does not perform it; the search
+            // happens on this first real request and takes far longer than a
+            // steady-state read.
+            var timeout = _busHasAnswered ? _options.CommandTimeout : _options.FirstRequestTimeout;
+
             try
             {
-                var raw = await _adapter.SendCommandAsync(command, _options.CommandTimeout, ct).ConfigureAwait(false);
+                var raw = await _adapter.SendCommandAsync(command, timeout, ct).ConfigureAwait(false);
                 response = Elm327Response.Parse(raw, command);
             }
             catch (ObdTimeoutException)
@@ -105,6 +135,12 @@ public sealed class Elm327Session
                 response = Elm327Response.Parse(string.Empty);
                 continue;
             }
+
+            // Any real reply means a protocol is established. NO DATA counts:
+            // it is the ECU declining a specific PID, which it can only do once
+            // the link is up.
+            if (response.Status is Elm327Status.Data or Elm327Status.NoData)
+                _busHasAnswered = true;
 
             if (!response.IsTransient)
                 return response;
@@ -130,7 +166,7 @@ public sealed class Elm327Session
     /// <summary>
     /// Queries the four capability bitmasks and returns what the ECU reports.
     ///
-    /// Run at every connection — CLAUDE.md rule 4. Stops early when a mask says
+    /// Run at every connection — never assume a PID exists. Stops early when a mask says
     /// the next range is unavailable, saving round trips on simpler ECUs.
     /// </summary>
     public async Task<SupportedPids> ScanSupportedPidsAsync(CancellationToken ct = default)

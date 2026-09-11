@@ -47,7 +47,7 @@ public class DatabaseTests
     [Fact]
     public void Every_table_carries_user_id_and_vehicle_id()
     {
-        // CLAUDE.md rule 2. Retrofitting multi-tenancy is a rewrite, so this is
+        // Retrofitting multi-tenancy would be a rewrite. Retrofitting multi-tenancy is a rewrite, so this is
         // pinned rather than trusted. samples is the documented exception: it
         // carries vehicle_id and reaches user_id through its trip.
         using var db = new MotorcitoDatabase(":memory:");
