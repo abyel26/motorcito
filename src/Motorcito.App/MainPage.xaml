@@ -101,6 +101,35 @@
                 </Grid>
             </Border>
 
+            <!-- Vehicle signals. What this car answered when asked, at connect, for
+                 every manufacturer-specific value the catalogs define for it: live
+                 values where the answer was plausible, and the reason otherwise. -->
+            <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="12" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="VEHICLE SIGNALS" FontSize="11" TextColor="#6E8B7E" CharacterSpacing="1.5" />
+                    <Label Text="{Binding SignalsSummary}" TextColor="#8FA99A" FontSize="12" />
+
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Signals}" Spacing="8">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="local:SignalRow">
+                                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="10">
+                                    <Label Grid.Row="0" Grid.Column="0" Text="{Binding Name}"
+                                           TextColor="White" FontSize="13" />
+                                    <Label Grid.Row="1" Grid.Column="0" Text="{Binding Status}"
+                                           TextColor="#6E8B7E" FontSize="11" />
+                                    <Label Grid.Row="0" Grid.RowSpan="2" Grid.Column="1" Text="{Binding Value}"
+                                           TextColor="White" FontSize="15" FontAttributes="Bold"
+                                           VerticalOptions="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
             <!-- Export. Works whether or not an adapter is connected: analysing
                  last week's drives should not require being sat in the car. -->
             <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">

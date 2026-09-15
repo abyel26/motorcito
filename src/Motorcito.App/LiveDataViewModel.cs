@@ -82,8 +82,11 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
     private string _dtcSummary = "—";
     private string _tripStatus = "Not recording";
     private string _diagnosticSummary = "—";
+    private const string NotConnectedSignalsSummary = "Connect to see which extra signals this car offers.";
+
     private string _oilTempSource = "—";
     private string _signalAttribution = string.Empty;
+    private string _signalsSummary = NotConnectedSignalsSummary;
     private bool _isBusy;
     private ObdSnapshot? _latest;
 
@@ -118,6 +121,11 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
     public string TripStatus { get => _tripStatus; private set => Set(ref _tripStatus, value); }
     public string DiagnosticSummary { get => _diagnosticSummary; private set => Set(ref _diagnosticSummary, value); }
     public bool IsBusy { get => _isBusy; private set => Set(ref _isBusy, value); }
+
+    /// <summary>Manufacturer-specific signals checked at connect: live values where verified, reasons otherwise.</summary>
+    public ObservableCollection<SignalRow> Signals { get; } = [];
+
+    public string SignalsSummary { get => _signalsSummary; private set => Set(ref _signalsSummary, value); }
 
     /// <summary>Where oil temperature comes from on this car, or why it is unavailable.</summary>
     public string OilTempSource { get => _oilTempSource; private set => Set(ref _oilTempSource, value); }
@@ -206,7 +214,7 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
             };
 
             // Before polling starts, so the probe has the adapter to itself.
-            var extended = await ProbeGapsAsync(session, supported);
+            var extended = await ProbeSignalsAsync(session, supported);
 
             var poller = new ObdPoller(session, supported, extendedCommands: extended);
             poller.SnapshotUpdated += OnSnapshot;
@@ -226,62 +234,144 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Fills gaps standard OBD leaves on this car with manufacturer-specific
-    /// reads — but only reads this car has just answered with plausible values.
+    /// Asks this car, once, for every manufacturer-specific signal the catalogs
+    /// define for it, and keeps only those it answers plausibly.
     ///
-    /// Today the one gap a hero gauge needs filled is oil temperature. The
-    /// per-signal diagnostics card, and the rest of the vocabulary, arrive with
-    /// the full catalog work.
+    /// Every request is a read, so a definition this car does not support costs
+    /// a refusal and nothing else. The results fill the Vehicle signals card;
+    /// the verified ones are handed to the poller.
     /// </summary>
-    private async Task<IReadOnlyList<SignalCommand>> ProbeGapsAsync(Elm327Session session, SupportedPids supported)
+    private async Task<IReadOnlyList<SignalCommand>> ProbeSignalsAsync(Elm327Session session, SupportedPids supported)
     {
         _verifiedSignalKeys.Clear();
+        Signals.Clear();
         SignalAttribution = string.Empty;
 
-        if (supported.IsSupported(0x5C))
-        {
-            OilTempSource = "Standard OBD";
-            return [];
-        }
-
         // Make and year from the VIN when the car returns one. Without it every
-        // catalog definition is a candidate; read-only requests make a wrong
-        // guess cost a refusal, and the car's answers decide.
+        // catalog definition is a candidate, and the car's answers decide.
         var vin = VinInfo.Parse(Vin);
         var identity = new VehicleIdentity(vin?.Vin, vin?.Make, null, vin?.ModelYear);
 
+        // One request per distinct command, whichever source or model year defined it.
         var candidates = _sources
             .SelectMany(s => s.CommandsFor(identity))
-            .Where(c => c.Signals.Any(s => s.CanonicalKey == CanonicalSignals.OilTemp.Key))
+            .DistinctBy(c => (c.Header, c.Service, c.Identifier))
             .ToList();
+
+        var standardOilTemp = supported.IsSupported(0x5C);
 
         if (candidates.Count == 0)
         {
-            OilTempSource = "Not available for this car";
+            SignalsSummary = vin?.Make is { } make
+                ? $"No extra signals are known for {make} yet."
+                : "No extra signals are known for this car yet.";
+            OilTempSource = standardOilTemp ? "Standard OBD" : "Not available for this car";
             return [];
         }
 
+        SignalsSummary = $"Checking {candidates.Count} signals…";
         var results = await SignalProbe.ProbeAsync(session, candidates);
-        var verified = results.FirstOrDefault(r => r.State == ProbeState.Verified);
 
-        if (verified is null)
+        foreach (var row in BuildSignalRows(results))
+            Signals.Add(row);
+
+        var verified = results.Where(r => r.State == ProbeState.Verified).ToList();
+        foreach (var result in verified)
         {
-            OilTempSource = $"Not available — {results[0].Describe()}";
-            return [];
+            foreach (var signal in result.Signals)
+            {
+                if (signal.Reading is { } reading)
+                    _verifiedSignalKeys.Add(reading.Key);
+            }
         }
 
-        foreach (var signal in verified.Signals)
+        var answered = results.Count(r => r.State is ProbeState.Verified or ProbeState.AnsweredUnmapped);
+        SignalsSummary = $"{answered} of {results.Count} answered on this car";
+
+        OilTempSource = standardOilTemp ? "Standard OBD"
+            : _verifiedSignalKeys.Contains(CanonicalSignals.OilTemp.Key) ? "Manufacturer read"
+            : "Not available for this car";
+
+        // Credit every catalog whose definitions are on screen, answered or not.
+        SignalAttribution = string.Join(" ", results
+            .Select(r => r.Command.SourceId)
+            .Distinct()
+            .Select(id => _sources.FirstOrDefault(s => s.SourceId == id)?.Attribution)
+            .OfType<string>());
+
+        // Poll only commands feeding a verified value, and only one command per
+        // value: a second definition for the same number costs a round trip for nothing.
+        var polled = new List<SignalCommand>();
+        var covered = new HashSet<string>();
+        foreach (var result in verified)
         {
-            if (signal.Reading is { } reading)
-                _verifiedSignalKeys.Add(reading.Key);
+            var keys = result.Signals.Where(s => s.Reading is not null).Select(s => s.Reading!.Key).ToList();
+            if (keys.All(covered.Contains))
+                continue;
+
+            covered.UnionWith(keys);
+            polled.Add(result.Command);
         }
 
-        OilTempSource = $"Manufacturer read ({verified.Command})";
-        SignalAttribution = _sources.FirstOrDefault(s => s.SourceId == verified.Command.SourceId)?.Attribution ?? string.Empty;
+        return polled;
+    }
 
-        // One source per value: a second verified definition would only cost
-        // another round trip for the same number.
-        return [verified.Command];
+    private static IEnumerable<SignalRow> BuildSignalRows(IReadOnlyList<ProbeResult> results)
+    {
+        var rows = new List<SignalRow>();
+
+        foreach (var result in results)
+        {
+            if (result.State is ProbeState.Verified or ProbeState.AnsweredUnmapped)
+            {
+                foreach (var signal in result.Signals)
+                {
+                    if (signal.Reading is { } reading)
+                    {
+                        rows.Add(new SignalRow
+                        {
+                            Name = SignalFormat.Label(reading.Signal, reading.Qualifier),
+                            Status = $"live · {result.Command}",
+                            LiveKey = reading.Key,
+                            Order = 0,
+                            Value = SignalFormat.Value(reading.Signal, reading.Value),
+                        });
+                        continue;
+                    }
+
+                    rows.Add(new SignalRow
+                    {
+                        Name = signal.Definition.Name,
+                        Status = signal.Check switch
+                        {
+                            SignalCheck.Unmapped => $"answered, not used yet · {result.Command}",
+                            SignalCheck.BlockedForPrivacy => "not collected (driver behaviour)",
+                            SignalCheck.Implausible => "answered with an implausible value",
+                            SignalCheck.UnconvertibleUnit => "answered in a unit the app does not convert",
+                            _ => "answered without a reading"
+                        },
+                        Order = signal.Check == SignalCheck.Unmapped ? 1 : 2,
+                        Value = signal.Check == SignalCheck.Unmapped && signal.SourceValue is { } source
+                            ? SignalFormat.SourceValue(source, signal.Definition.Unit)
+                            : "—",
+                    });
+                }
+
+                continue;
+            }
+
+            foreach (var definition in result.Command.Signals)
+            {
+                rows.Add(new SignalRow
+                {
+                    Name = definition.Name,
+                    Status = result.Describe(),
+                    Order = 3,
+                });
+            }
+        }
+
+        return rows.OrderBy(r => r.Order).ThenBy(r => r.Name, StringComparer.CurrentCulture);
     }
 
     public async Task DisconnectAsync()
@@ -317,6 +407,8 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
 
         // Verification is per connection: the next car may not answer the same reads.
         _verifiedSignalKeys.Clear();
+        Signals.Clear();
+        SignalsSummary = NotConnectedSignalsSummary;
 
         SampleRate = "—";
         OnPropertyChanged(nameof(IsConnected));
@@ -588,6 +680,15 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
 
         if (refreshText)
         {
+            if (snapshot.Extended is { } extended)
+            {
+                foreach (var row in Signals)
+                {
+                    if (row.LiveKey is { } key && extended.TryGetValue(key, out var reading))
+                        row.Value = SignalFormat.Value(reading.Signal, reading.Value);
+                }
+            }
+
             SampleRate = snapshot.SamplesPerSecond > 0
                 ? $"{snapshot.SamplesPerSecond:0.#} reads/s"
                 : "measuring…";

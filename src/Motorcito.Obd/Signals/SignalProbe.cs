@@ -8,6 +8,14 @@ public enum ProbeState
     /// <summary>The car answered, but every value is outside what a real car produces. Hidden.</summary>
     Implausible,
 
+    /// <summary>
+    /// The car answered, but nothing in the reply maps to a value Motorcito
+    /// uses (or it is driver-behaviour data, which is not collected). There is
+    /// no plausibility range to pass, so it is shown in diagnostics only and
+    /// never polled or used by features.
+    /// </summary>
+    AnsweredUnmapped,
+
     /// <summary>Refused or nothing at that address. This car does not offer it.</summary>
     Unsupported,
 
@@ -31,6 +39,7 @@ public sealed record ProbeResult(
     {
         ProbeState.Verified => "verified",
         ProbeState.Implausible => "answered with implausible values",
+        ProbeState.AnsweredUnmapped => "answered, not used yet",
         ProbeState.UnsupportedByApp => $"not sent: {Command.UnsupportedReason ?? "unsupported addressing"}",
         _ => Response?.Describe() ?? State.ToString()
     };
@@ -71,10 +80,11 @@ public static class SignalProbe
             }
 
             var request = command.ToRequest();
-            UdsResponse response = new(UdsOutcome.NoResponse, [], null, Elm327Status.Empty);
+            ProbeResult result = new(command, ProbeState.NoResponse, null, []);
 
             for (var attempt = 0; attempt < Attempts; attempt++)
             {
+                UdsResponse response;
                 try
                 {
                     response = await session.ReadIdentifierAsync(request, ct: ct).ConfigureAwait(false);
@@ -85,11 +95,12 @@ public static class SignalProbe
                     response = new(UdsOutcome.NoResponse, [], null, Elm327Status.Empty);
                 }
 
-                if (response.Outcome is not (UdsOutcome.NoResponse or UdsOutcome.Malformed))
+                result = Classify(command, response);
+                if (!WorthRetrying(result))
                     break;
             }
 
-            results.Add(Classify(command, response));
+            results.Add(result);
         }
 
         if (sentAny)
@@ -108,14 +119,29 @@ public static class SignalProbe
         return results;
     }
 
+    /// <summary>
+    /// Whether a result may be the link's fault rather than the car's answer.
+    ///
+    /// A positive reply too short for its own definition is almost always a
+    /// damaged frame — a cheap adapter dropping the last byte — not the car
+    /// genuinely answering with half a value. Seen in practice: oil temperature
+    /// written off for a whole connection because one reply lost its final byte.
+    /// </summary>
+    private static bool WorthRetrying(ProbeResult result) => result.State switch
+    {
+        ProbeState.NoResponse => true,
+        ProbeState.Implausible => result.Signals.Any(s => s.Check == SignalCheck.NoReading),
+        _ => false
+    };
+
     private static ProbeResult Classify(SignalCommand command, UdsResponse response)
     {
         switch (response.Outcome)
         {
             case UdsOutcome.Positive:
                 var signals = SignalDecoder.Decode(command, response);
-                var state = signals.Any(s => s.Check == SignalCheck.Plausible)
-                    ? ProbeState.Verified
+                var state = signals.Any(s => s.Check == SignalCheck.Plausible) ? ProbeState.Verified
+                    : signals.All(s => s.Check is SignalCheck.Unmapped or SignalCheck.BlockedForPrivacy) ? ProbeState.AnsweredUnmapped
                     : ProbeState.Implausible;
                 return new(command, state, response, signals);
 

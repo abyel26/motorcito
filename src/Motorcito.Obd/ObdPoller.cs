@@ -90,10 +90,7 @@ public sealed class ObdPoller
 
         _extended = (extendedCommands ?? [])
             .Where(c => c.IsSendable)
-            .Select(c => new ExtendedState(
-                c,
-                c.ToRequest(),
-                TimeSpan.FromSeconds(Math.Max(c.IntervalSeconds, _options.MinimumExtendedInterval.TotalSeconds))))
+            .Select(c => new ExtendedState(c, c.ToRequest(), IntervalFor(c)))
             .ToList();
     }
 
@@ -261,6 +258,27 @@ public sealed class ObdPoller
         }
 
         return reads;
+    }
+
+    /// <summary>
+    /// How often a manufacturer-specific command is re-read: never faster than
+    /// its source suggests, than the values it carries are worth, or than the
+    /// poller's floor. A command carrying several values is paced by the one
+    /// that needs refreshing soonest.
+    /// </summary>
+    private TimeSpan IntervalFor(SignalCommand command)
+    {
+        var signalFloor = command.Signals
+            .Select(s => CanonicalSignals.Find(s.CanonicalKey)?.MinimumIntervalSeconds)
+            .OfType<double>()
+            .DefaultIfEmpty(0)
+            .Min();
+
+        var seconds = Math.Max(
+            Math.Max(command.IntervalSeconds, signalFloor),
+            _options.MinimumExtendedInterval.TotalSeconds);
+
+        return TimeSpan.FromSeconds(seconds);
     }
 
     private bool IsDueThisCycle(PidDefinition def, long cycle) => def.Poll switch

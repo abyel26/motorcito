@@ -148,6 +148,23 @@ public sealed class SimulatedObdAdapter : IObdAdapter
 
             // Engine oil pressure: 16-bit kPa, rising with engine speed.
             new(EngineHeader, 0x22, 0x0415, 2, t => Word16(250 + 150 * Math.Abs(Math.Sin(t / 20.0)))),
+
+            // Throttle desired and actual: 16-bit degrees × 512, actual lagging desired.
+            new(EngineHeader, 0x22, 0x091A, 2, t => Word16((8 + 6 * Math.Abs(Math.Sin(t / 20.0))) * 512)),
+            new(EngineHeader, 0x22, 0x093C, 2, t => Word16((7.8 + 6 * Math.Abs(Math.Sin((t - 0.3) / 20.0))) * 512)),
+
+            // Alternator output: 16-bit volts × 8.
+            new(EngineHeader, 0x22, 0x16E9, 2, _ => Word16(14.1 * 8)),
+
+            // Alternator field coil duty: 16-bit, × 200 / 65535 %. Catalogs define
+            // it but Motorcito does not use it, so it exercises the unmapped path.
+            new(EngineHeader, 0x22, 0x16E8, 2, _ => Word16(35 * 65535 / 200.0)),
+
+            // Cooling fan relay: bit 5 of the first byte, cycling once warm.
+            new(EngineHeader, 0x22, 0x0967, 2, t => [(byte)(t > 120 && (int)(t / 30) % 2 == 0 ? 0x04 : 0x00)]),
+
+            // Trouble codes stored: none.
+            new(EngineHeader, 0x22, 0x0202, 2, _ => [0x00]),
         };
 
         for (var wheel = 0; wheel < 4; wheel++)

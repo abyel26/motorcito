@@ -24,13 +24,19 @@ public enum SignalPrivacy
 /// is the guard that keeps a mis-mapped or mis-scaled catalog entry from
 /// showing a consumer a confident wrong number.
 /// </summary>
+/// <param name="MinimumIntervalSeconds">
+/// How often re-reading this value is worth a round trip. Tire pressure changes
+/// over minutes; polling it every second would spend the Mode 01 budget that
+/// keeps RPM responsive, for nothing.
+/// </param>
 public sealed record CanonicalSignal(
     string Key,
     string Name,
     string Unit,
     double? PlausibleMin,
     double? PlausibleMax,
-    SignalPrivacy Privacy = SignalPrivacy.VehicleHealth)
+    SignalPrivacy Privacy = SignalPrivacy.VehicleHealth,
+    double MinimumIntervalSeconds = 1)
 {
     public bool IsPlausible(double value)
         => (PlausibleMin is not { } min || value >= min)
@@ -40,45 +46,45 @@ public sealed record CanonicalSignal(
 public static class CanonicalSignals
 {
     // Engine
-    public static readonly CanonicalSignal OilTemp = new("oil_temp", "Oil temperature", SignalUnits.Celsius, -40, 160);
+    public static readonly CanonicalSignal OilTemp = new("oil_temp", "Oil temperature", SignalUnits.Celsius, -40, 160, MinimumIntervalSeconds: 2);
     public static readonly CanonicalSignal OilPressure = new("oil_pressure", "Oil pressure", SignalUnits.Kilopascal, 0, 1000);
-    public static readonly CanonicalSignal OilLife = new("oil_life", "Oil life remaining", SignalUnits.Percent, 0, 100);
-    public static readonly CanonicalSignal HeadTemp = new("head_temp", "Cylinder head temperature", SignalUnits.Celsius, -40, 200);
-    public static readonly CanonicalSignal CatalystTemp = new("cat_temp", "Catalyst temperature", SignalUnits.Celsius, 0, 1100);
-    public static readonly CanonicalSignal MisfireCount = new("misfire_count", "Misfire count", SignalUnits.Count, 0, 65535);
+    public static readonly CanonicalSignal OilLife = new("oil_life", "Oil life remaining", SignalUnits.Percent, 0, 100, MinimumIntervalSeconds: 300);
+    public static readonly CanonicalSignal HeadTemp = new("head_temp", "Cylinder head temperature", SignalUnits.Celsius, -40, 200, MinimumIntervalSeconds: 2);
+    public static readonly CanonicalSignal CatalystTemp = new("cat_temp", "Catalyst temperature", SignalUnits.Celsius, 0, 1100, MinimumIntervalSeconds: 5);
+    public static readonly CanonicalSignal MisfireCount = new("misfire_count", "Misfire count", SignalUnits.Count, 0, 65535, MinimumIntervalSeconds: 5);
     public static readonly CanonicalSignal ThrottleDesired = new("throttle_desired", "Throttle desired", SignalUnits.Degree, 0, 90);
     public static readonly CanonicalSignal ThrottleActual = new("throttle_actual", "Throttle actual", SignalUnits.Degree, 0, 90);
-    public static readonly CanonicalSignal FanOn = new("fan_on", "Cooling fan", SignalUnits.OnOff, 0, 1);
-    public static readonly CanonicalSignal DtcCount = new("dtc_count", "Trouble codes stored", SignalUnits.Count, 0, 255);
+    public static readonly CanonicalSignal FanOn = new("fan_on", "Cooling fan", SignalUnits.OnOff, 0, 1, MinimumIntervalSeconds: 5);
+    public static readonly CanonicalSignal DtcCount = new("dtc_count", "Trouble codes stored", SignalUnits.Count, 0, 255, MinimumIntervalSeconds: 60);
 
     // Driveline
-    public static readonly CanonicalSignal TransmissionTemp = new("trans_temp", "Transmission temperature", SignalUnits.Celsius, -40, 150);
+    public static readonly CanonicalSignal TransmissionTemp = new("trans_temp", "Transmission temperature", SignalUnits.Celsius, -40, 150, MinimumIntervalSeconds: 5);
     public static readonly CanonicalSignal TransmissionGear = new("trans_gear", "Current gear", SignalUnits.None, -1, 10);
 
     // Tires (qualified by wheel)
-    public static readonly CanonicalSignal TirePressure = new("tire_pressure", "Tire pressure", SignalUnits.Kilopascal, 100, 450);
-    public static readonly CanonicalSignal TireTemp = new("tire_temp", "Tire temperature", SignalUnits.Celsius, -40, 120);
+    public static readonly CanonicalSignal TirePressure = new("tire_pressure", "Tire pressure", SignalUnits.Kilopascal, 100, 450, MinimumIntervalSeconds: 30);
+    public static readonly CanonicalSignal TireTemp = new("tire_temp", "Tire temperature", SignalUnits.Celsius, -40, 120, MinimumIntervalSeconds: 30);
 
     // Trip and fuel
-    public static readonly CanonicalSignal Odometer = new("odometer", "Odometer", SignalUnits.Kilometre, 0, 2_000_000);
-    public static readonly CanonicalSignal FuelLevelVolume = new("fuel_level_volume", "Fuel level", SignalUnits.Litre, 0, 200);
-    public static readonly CanonicalSignal DistanceToEmpty = new("distance_to_empty", "Distance to empty", SignalUnits.Kilometre, 0, 2000);
+    public static readonly CanonicalSignal Odometer = new("odometer", "Odometer", SignalUnits.Kilometre, 0, 2_000_000, MinimumIntervalSeconds: 60);
+    public static readonly CanonicalSignal FuelLevelVolume = new("fuel_level_volume", "Fuel level", SignalUnits.Litre, 0, 200, MinimumIntervalSeconds: 30);
+    public static readonly CanonicalSignal DistanceToEmpty = new("distance_to_empty", "Distance to empty", SignalUnits.Kilometre, 0, 2000, MinimumIntervalSeconds: 30);
 
     // 12 V system
-    public static readonly CanonicalSignal AlternatorVoltage = new("alternator_voltage", "Alternator output", SignalUnits.Volt, 8, 16);
-    public static readonly CanonicalSignal Battery12VVoltage = new("battery_12v_voltage", "12 V battery voltage", SignalUnits.Volt, 8, 16);
-    public static readonly CanonicalSignal Battery12VCharge = new("battery_12v_charge", "12 V battery charge", SignalUnits.Percent, 0, 100);
-    public static readonly CanonicalSignal Battery12VTemp = new("battery_12v_temp", "12 V battery temperature", SignalUnits.Celsius, -40, 100);
+    public static readonly CanonicalSignal AlternatorVoltage = new("alternator_voltage", "Alternator output", SignalUnits.Volt, 8, 16, MinimumIntervalSeconds: 5);
+    public static readonly CanonicalSignal Battery12VVoltage = new("battery_12v_voltage", "12 V battery voltage", SignalUnits.Volt, 8, 16, MinimumIntervalSeconds: 10);
+    public static readonly CanonicalSignal Battery12VCharge = new("battery_12v_charge", "12 V battery charge", SignalUnits.Percent, 0, 100, MinimumIntervalSeconds: 60);
+    public static readonly CanonicalSignal Battery12VTemp = new("battery_12v_temp", "12 V battery temperature", SignalUnits.Celsius, -40, 100, MinimumIntervalSeconds: 60);
 
     // High-voltage battery (EV / hybrid)
-    public static readonly CanonicalSignal HvStateOfCharge = new("hv_soc", "Battery charge", SignalUnits.Percent, 0, 100);
-    public static readonly CanonicalSignal HvStateOfHealth = new("hv_soh", "Battery health", SignalUnits.Percent, 0, 100);
-    public static readonly CanonicalSignal HvBatteryTempMin = new("hv_battery_temp_min", "Battery temperature (min)", SignalUnits.Celsius, -40, 80);
-    public static readonly CanonicalSignal HvBatteryTempMax = new("hv_battery_temp_max", "Battery temperature (max)", SignalUnits.Celsius, -40, 80);
-    public static readonly CanonicalSignal ChargingState = new("charging_state", "Charging", SignalUnits.None, null, null);
+    public static readonly CanonicalSignal HvStateOfCharge = new("hv_soc", "Battery charge", SignalUnits.Percent, 0, 100, MinimumIntervalSeconds: 30);
+    public static readonly CanonicalSignal HvStateOfHealth = new("hv_soh", "Battery health", SignalUnits.Percent, 0, 100, MinimumIntervalSeconds: 3600);
+    public static readonly CanonicalSignal HvBatteryTempMin = new("hv_battery_temp_min", "Battery temperature (min)", SignalUnits.Celsius, -40, 80, MinimumIntervalSeconds: 10);
+    public static readonly CanonicalSignal HvBatteryTempMax = new("hv_battery_temp_max", "Battery temperature (max)", SignalUnits.Celsius, -40, 80, MinimumIntervalSeconds: 10);
+    public static readonly CanonicalSignal ChargingState = new("charging_state", "Charging", SignalUnits.None, null, null, MinimumIntervalSeconds: 10);
 
     // Cabin
-    public static readonly CanonicalSignal CabinTemp = new("cabin_temp", "Cabin temperature", SignalUnits.Celsius, -40, 80);
+    public static readonly CanonicalSignal CabinTemp = new("cabin_temp", "Cabin temperature", SignalUnits.Celsius, -40, 80, MinimumIntervalSeconds: 30);
 
     // Driver behaviour — recognised so sources can map to them and the policy
     // can block them, never so features can use them by default.
