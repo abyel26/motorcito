@@ -109,7 +109,7 @@ public sealed class ArcGaugeDrawable(GaugeView owner) : IDrawable
         // A gauge whose PID dropped out of the last snapshot shows its last
         // reading dimmed rather than snapping to zero — a cheap adapter drops
         // frames constantly and a gauge slamming to 0 looks broken.
-        var alpha = owner.IsStale ? 0.35f : 1f;
+        var alpha = owner.IsStale || owner.IsUnsupported ? 0.35f : 1f;
 
         // Text rects are deliberately much taller than their font size.
         // DrawString defaults to TextFlow.ClipBounds, and a rect only as tall as
@@ -120,7 +120,11 @@ public sealed class ArcGaugeDrawable(GaugeView owner) : IDrawable
         // 0.21 rather than larger so a four-digit RPM still clears the arc's
         // inner edge at the smaller size used in the hero grid.
         canvas.FontSize = size * 0.21f;
-        var numeral = owner.HasValue ? displayed.ToString($"F{owner.Decimals}") : "—";
+        // Three distinct states, because the gauges are always on screen:
+        // a live reading, "not offered by this car", and "nothing yet".
+        var numeral = owner.IsUnsupported
+            ? "n/a"
+            : owner.HasValue ? displayed.ToString($"F{owner.Decimals}") : "—";
         canvas.DrawString(
             numeral,
             cx - size * 0.5f, cy - size * 0.26f, size, size * 0.44f,

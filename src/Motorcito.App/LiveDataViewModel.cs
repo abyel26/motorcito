@@ -219,7 +219,6 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
 
         SampleRate = "—";
         OnPropertyChanged(nameof(IsConnected));
-        NotifyHeroAvailability();
     }
 
     /// <summary>
@@ -422,32 +421,7 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
             });
         }
 
-        NotifyHeroAvailability();
     }
-
-    /// <summary>
-    /// The hero gauges are declared in XAML but shown only if this car actually
-    /// reports them, so an absent parameter reflows the row rather than leaving
-    /// a dead dial on screen.
-    /// </summary>
-    private void NotifyHeroAvailability()
-    {
-        OnPropertyChanged(nameof(HasRpm));
-        OnPropertyChanged(nameof(HasSpeed));
-        OnPropertyChanged(nameof(HasCoolant));
-        OnPropertyChanged(nameof(HasOilTemp));
-    }
-
-    public bool HasRpm => GaugeFor(0x0C) is not null;
-    public bool HasSpeed => GaugeFor(0x0D) is not null;
-    public bool HasCoolant => GaugeFor(0x05) is not null;
-
-    /// <summary>
-    /// PID 0x5C. Decoded by the registry but not reported by every car — the
-    /// simulator's default profile omits it, and whether the Miata offers it is
-    /// a question for its own capability scan.
-    /// </summary>
-    public bool HasOilTemp => GaugeFor(0x5C) is not null;
 
     private void OnSnapshot(object? sender, ObdSnapshot snapshot)
     {

@@ -34,6 +34,25 @@ public sealed class GaugeView : GraphicsView
     /// </summary>
     public bool IsStale { get; private set; }
 
+    /// <summary>
+    /// True when connected to a car that does not report this parameter.
+    ///
+    /// Distinct from simply having no value yet: the gauges are always on
+    /// screen, so "waiting for a connection" and "this car cannot give you
+    /// this" must not look the same.
+    /// </summary>
+    public bool IsUnsupported { get; private set; }
+
+    /// <summary>Marks whether the connected car reports this parameter at all.</summary>
+    public void SetUnsupported(bool unsupported)
+    {
+        if (IsUnsupported == unsupported)
+            return;
+
+        IsUnsupported = unsupported;
+        Invalidate();
+    }
+
     public static readonly BindableProperty ValueProperty = BindableProperty.Create(
         nameof(Value), typeof(double), typeof(GaugeView), 0d,
         propertyChanged: OnTargetChanged);
@@ -202,7 +221,7 @@ public sealed class GaugeView : GraphicsView
         _hasValue = false;
         Peak = null;
         IsStale = false;
-        IsConfigured = false;
+        IsUnsupported = false;
         Value = 0;
         Invalidate();
     }

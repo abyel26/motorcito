@@ -37,6 +37,14 @@ public partial class MainPage : ContentPage
     {
         base.OnAppearing();
 
+        // The gauges render before any connection, so they cannot wait for the
+        // capability scan to tell them their own label and range.
+        foreach (var (gauge, pid) in Heroes)
+        {
+            if (!gauge.IsConfigured)
+                Configure(gauge, pid);
+        }
+
         _ticker = Dispatcher.CreateTimer();
         _ticker.Interval = FrameInterval;
         _ticker.Tick += OnTick;
@@ -73,11 +81,6 @@ public partial class MainPage : ContentPage
 
         foreach (var (gauge, pid) in Heroes)
         {
-            // Skip gauges this car does not report — they are collapsed, so
-            // easing and redrawing them is wasted main-thread time.
-            if (!gauge.IsVisible)
-                continue;
-
             Apply(gauge, pid);
             gauge.Tick(dt);
         }
@@ -95,20 +98,29 @@ public partial class MainPage : ContentPage
         }
     }
 
+    /// <summary>Applies a gauge's label, unit and range from the style table.</summary>
+    private static void Configure(GaugeView gauge, byte pid)
+    {
+        var style = GaugeStyles.For(pid);
+        gauge.Configure(style.ShortLabel, GaugeStyles.UnitFor(pid), style.Min, style.Max,
+            style.Warn, style.Redline, style.Decimals, style.TimeConstant);
+    }
+
     /// <summary>Copies one PID's reading from the view model onto a hero gauge.</summary>
     private void Apply(GaugeView gauge, byte pid)
     {
         var item = _viewModel.GaugeFor(pid);
-        if (item is null)
-            return;
 
-        // Once per connection: the range and label properties invalidate on
-        // change, so setting them every frame would redraw every frame.
-        if (!gauge.IsConfigured)
+        if (item is null)
         {
-            gauge.Configure(item.ShortLabel, item.Unit, item.Min, item.Max,
-                item.Warn, item.Redline, item.Decimals, item.TimeConstant);
+            // No gauge model means either no connection yet, or a connected car
+            // whose capability scan did not report this PID. Those are
+            // different facts and the dial must not present them identically.
+            gauge.SetUnsupported(_viewModel.IsConnected);
+            return;
         }
+
+        gauge.SetUnsupported(false);
 
         if (item.Numeric is not { } value)
         {

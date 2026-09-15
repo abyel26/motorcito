@@ -80,6 +80,26 @@ public static class GaugeStyles
     public static GaugeStyle For(PidDefinition definition)
         => ByPid.TryGetValue(definition.Pid, out var style) ? style : Fallback(definition);
 
+    /// <summary>
+    /// The style for a PID by number, without needing a capability scan.
+    ///
+    /// The hero gauges render before any connection exists, so they cannot wait
+    /// for the car to tell them their own range.
+    /// </summary>
+    public static GaugeStyle For(byte pid)
+    {
+        if (ByPid.TryGetValue(pid, out var style))
+            return style;
+
+        var definition = PidRegistry.Find(pid);
+        return definition is null
+            ? new GaugeStyle($"PID {pid:X2}", 0, 100, Decimals: 1)
+            : Fallback(definition);
+    }
+
+    /// <summary>The metric unit for a PID. Units are protocol facts, so they come from the registry.</summary>
+    public static string UnitFor(byte pid) => PidRegistry.Find(pid)?.Unit ?? string.Empty;
+
     private static GaugeStyle Fallback(PidDefinition definition)
     {
         var label = definition.Name.ToUpperInvariant();

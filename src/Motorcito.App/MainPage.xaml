@@ -11,6 +11,21 @@
     <ScrollView>
         <VerticalStackLayout Padding="16" Spacing="14">
 
+            <!-- Hero gauges, first on the page: this is the dashboard, and the
+                 connection and export cards are setup UI around it.
+
+                 Always visible, including before a connection — an empty dial
+                 reads as an instrument waiting for input, where an empty page
+                 reads as a broken app. Label, unit, range and easing come from
+                 GaugeStyles at runtime rather than being set here, so there is
+                 one source of truth and it can become per-vehicle later. -->
+            <FlexLayout Wrap="Wrap" JustifyContent="Start" AlignContent="Start">
+                <ctl:GaugeView x:Name="RpmGauge" FlexLayout.Basis="50%" HeightRequest="165" />
+                <ctl:GaugeView x:Name="SpeedGauge" FlexLayout.Basis="50%" HeightRequest="165" />
+                <ctl:GaugeView x:Name="CoolantGauge" FlexLayout.Basis="50%" HeightRequest="165" />
+                <ctl:GaugeView x:Name="OilGauge" FlexLayout.Basis="50%" HeightRequest="165" />
+            </FlexLayout>
+
             <!-- Connection -->
             <Border BackgroundColor="#16211C" StrokeThickness="0" Padding="14">
                 <Border.StrokeShape>
@@ -130,20 +145,6 @@
                  this car actually reports its PID — never assume one exists.
                  FlexLayout rather than a Grid so a missing parameter reflows
                  instead of leaving a hole where a dial should be. -->
-            <!-- Label, unit, range and easing all come from GaugeStyles at
-                 runtime, so they are deliberately not set here — one source of
-                 truth, and it can become per-vehicle without touching XAML. -->
-            <FlexLayout Wrap="Wrap" JustifyContent="Start" AlignContent="Start" Margin="0,4,0,0">
-                <ctl:GaugeView x:Name="RpmGauge" FlexLayout.Basis="50%"
-                               HeightRequest="165" IsVisible="{Binding HasRpm}" />
-                <ctl:GaugeView x:Name="SpeedGauge" FlexLayout.Basis="50%"
-                               HeightRequest="165" IsVisible="{Binding HasSpeed}" />
-                <ctl:GaugeView x:Name="CoolantGauge" FlexLayout.Basis="50%"
-                               HeightRequest="165" IsVisible="{Binding HasCoolant}" />
-                <ctl:GaugeView x:Name="OilGauge" FlexLayout.Basis="50%"
-                               HeightRequest="165" IsVisible="{Binding HasOilTemp}" />
-            </FlexLayout>
-
             <Label Text="LIVE DATA" FontSize="11" TextColor="#6E8B7E" CharacterSpacing="1.5" Margin="4,4,0,0" />
 
             <!-- BindableLayout rather than CollectionView: this list is small,
