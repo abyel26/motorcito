@@ -42,6 +42,21 @@ public sealed class SimulatorQuirks
 }
 
 /// <summary>
+/// A manufacturer-specific identifier a simulated ECU answers.
+/// </summary>
+/// <param name="Header">The request header that reaches this ECU, e.g. "7E0".</param>
+/// <param name="Service">0x21 or 0x22.</param>
+/// <param name="Identifier">The local identifier or DID.</param>
+/// <param name="IdentifierLength">1 for service 0x21, 2 for 0x22.</param>
+/// <param name="Bytes">Data bytes to return, given seconds since connect.</param>
+public sealed record SimulatedIdentifier(
+    string Header,
+    byte Service,
+    ushort Identifier,
+    int IdentifierLength,
+    Func<double, byte[]> Bytes);
+
+/// <summary>
 /// An in-memory OBD-II vehicle.
 ///
 /// Exists so the protocol layer, the polling loop and the rules engine can be
@@ -51,13 +66,20 @@ public sealed class SimulatorQuirks
 /// </summary>
 public sealed class SimulatedObdAdapter : IObdAdapter
 {
+    /// <summary>The engine ECU's physical request header. Mode 01 answers here as well as on the functional header.</summary>
+    private const string EngineHeader = "7E0";
+
     private readonly SimulatorQuirks _quirks;
     private readonly Random _random;
     private readonly HashSet<byte> _supported;
     private readonly List<string> _storedDtcs;
     private readonly string? _vin;
+    private readonly IReadOnlyList<SimulatedIdentifier> _extended;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private ObdConnectionState _state = ObdConnectionState.Disconnected;
+
+    /// <summary>The header set by the last <c>ATSH</c>; reset by <c>ATZ</c> and <c>ATD</c>.</summary>
+    private string _header = SignalRequest.FunctionalHeader;
 
     /// <summary>Engine state the simulation advances over time.</summary>
     private DateTime _startedAt;
@@ -77,13 +99,15 @@ public sealed class SimulatedObdAdapter : IObdAdapter
         SimulatorQuirks? quirks = null,
         IEnumerable<string>? storedDtcs = null,
         string? vin = "WBS8M9C50J5K12345",
-        int randomSeed = 1234)
+        int randomSeed = 1234,
+        IEnumerable<SimulatedIdentifier>? extendedIdentifiers = null)
     {
         Name = name;
         _quirks = quirks ?? SimulatorQuirks.ObdLinkMxPlus;
         _random = new Random(randomSeed);
         _vin = vin;
         _storedDtcs = storedDtcs?.ToList() ?? [];
+        _extended = extendedIdentifiers?.ToList() ?? [];
 
         // Default to a well-equipped modern car: everything the registry knows,
         // minus bank-2 trims (inline engine).
@@ -97,10 +121,59 @@ public sealed class SimulatedObdAdapter : IObdAdapter
             ?? PidRegistry.All.Select(d => d.Pid).Where(p => p is not (0x08 or 0x09)).ToHashSet();
     }
 
+    /// <summary>
+    /// A 2018 MX-5 (ND) as observed on the real car: no standard oil temp
+    /// (0x5C) or narrowband O2 (0x14), so the interesting values are only
+    /// reachable through manufacturer-specific reads.
+    ///
+    /// The identifiers below are the simulator's own fixtures, written here
+    /// rather than loaded from any catalog, so protocol tests never depend on a
+    /// removable data source. They are chosen to match what catalogs describe
+    /// for this car so the profile path can be exercised end to end.
+    /// </summary>
+    public static SimulatedObdAdapter MazdaMx5Nd(SimulatorQuirks? quirks = null, int randomSeed = 1234)
+    {
+        static byte TirePressure(double bar) => Clamp8(bar * 100000.0 / 1373.0);
+        static byte TireTemp(double celsius) => Clamp8(celsius + 50);
+
+        // Per-wheel base pressures differ slightly, as real tires do, and warm
+        // up a little over the drive.
+        double[] basePressures = [2.30, 2.32, 2.20, 2.25];
+
+        var identifiers = new List<SimulatedIdentifier>
+        {
+            // Engine oil temperature: 16-bit, value / 100 − 40 °C. Warms more
+            // slowly than coolant and settles hotter.
+            new(EngineHeader, 0x22, 0x1310, 2, t => Word16((Math.Min(102, 20 + t * 0.42) + 40) * 100)),
+
+            // Engine oil pressure: 16-bit kPa, rising with engine speed.
+            new(EngineHeader, 0x22, 0x0415, 2, t => Word16(250 + 150 * Math.Abs(Math.Sin(t / 20.0)))),
+        };
+
+        for (var wheel = 0; wheel < 4; wheel++)
+        {
+            var basePressure = basePressures[wheel];
+            var offset = wheel;
+            identifiers.Add(new("720", 0x22, (ushort)(0x2A05 + wheel), 2,
+                t => [TirePressure(basePressure + Math.Min(0.15, t * 0.0005))]));
+            identifiers.Add(new("720", 0x22, (ushort)(0x2A0A + wheel), 2,
+                t => [TireTemp(Math.Min(45, 20 + t * 0.05) + offset)]));
+        }
+
+        return new SimulatedObdAdapter(
+            name: "Simulated Vehicle (Mazda MX-5 ND 2018)",
+            supportedPids: PidRegistry.All.Select(d => d.Pid).Where(p => p is not (0x08 or 0x09 or 0x14 or 0x5C)),
+            quirks: quirks,
+            vin: "JM1NDAD75J0100001",
+            randomSeed: randomSeed,
+            extendedIdentifiers: identifiers);
+    }
+
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         SetState(ObdConnectionState.Connecting);
         _startedAt = DateTime.UtcNow;
+        _header = SignalRequest.FunctionalHeader;
         SetState(ObdConnectionState.Connected);
         return Task.CompletedTask;
     }
@@ -137,19 +210,24 @@ public sealed class SimulatedObdAdapter : IObdAdapter
     private string Respond(string command)
     {
         if (command.StartsWith("AT", StringComparison.Ordinal))
-        {
-            // ATZ answers with a version banner rather than OK, like the real thing.
-            return command == "ATZ" ? "ELM327 v1.5" : "OK";
-        }
+            return AtResponse(command);
+
+        // Standard services reach the engine ECU on the functional header and
+        // on its own physical header. Pointed at any other module, nothing that
+        // speaks Mode 01 is listening.
+        var engineListening = _header is SignalRequest.FunctionalHeader or EngineHeader;
 
         if (command is "03" or "07" or "0A")
-            return DtcResponse(command);
+            return engineListening ? DtcResponse(command) : "NO DATA";
 
         if (command == "0902")
-            return VinResponse();
+            return engineListening ? VinResponse() : "NO DATA";
 
         if (command.Length >= 4 && command.StartsWith("01", StringComparison.Ordinal))
         {
+            if (!engineListening)
+                return "NO DATA";
+
             var pid = Convert.ToByte(command.Substring(2, 2), 16);
 
             if (pid is 0x00 or 0x20 or 0x40 or 0x60)
@@ -165,7 +243,68 @@ public sealed class SimulatedObdAdapter : IObdAdapter
             return $"41{pid:X2}" + Hex(SimulateBytes(def));
         }
 
+        if (command.Length is 4 or 6 && IsHexOnly(command) && command[..2] is "21" or "22")
+            return ExtendedResponse(command);
+
         return "?";
+    }
+
+    private string AtResponse(string command)
+    {
+        // ATZ answers with a version banner rather than OK, like the real thing,
+        // and both it and ATD restore the default functional header.
+        if (command == "ATZ")
+        {
+            _header = SignalRequest.FunctionalHeader;
+            return "ELM327 v1.5";
+        }
+
+        if (command == "ATD")
+        {
+            _header = SignalRequest.FunctionalHeader;
+            return "OK";
+        }
+
+        if (command.StartsWith("ATSH", StringComparison.Ordinal))
+        {
+            var header = command[4..];
+            if (!SignalRequest.IsElevenBitHeader(header))
+                return "?";
+
+            _header = header;
+            return "OK";
+        }
+
+        return "OK";
+    }
+
+    /// <summary>
+    /// Answers a service 0x21/0x22 read the way a real bus does: silence on the
+    /// functional header or at an address with no module, a 7F 31 refusal from
+    /// a module that exists but does not know the identifier, and data otherwise.
+    /// </summary>
+    private string ExtendedResponse(string command)
+    {
+        if (_header == SignalRequest.FunctionalHeader)
+            return "NO DATA";
+
+        var atThisAddress = _extended.Where(e => e.Header == _header).ToList();
+        if (atThisAddress.Count == 0)
+            return "NO DATA";
+
+        var service = Convert.ToByte(command[..2], 16);
+        var identifierHex = command[2..];
+        var identifierLength = identifierHex.Length / 2;
+        var identifier = Convert.ToUInt16(identifierHex, 16);
+
+        var match = atThisAddress.FirstOrDefault(e =>
+            e.Service == service && e.Identifier == identifier && e.IdentifierLength == identifierLength);
+
+        if (match is null)
+            return $"7F{service:X2}31";
+
+        var elapsed = (DateTime.UtcNow - _startedAt).TotalSeconds;
+        return $"{service + 0x40:X2}{identifierHex}" + Hex(match.Bytes(elapsed));
     }
 
     /// <summary>Builds the capability bitmask for a range from the configured supported set.</summary>
@@ -264,30 +403,31 @@ public sealed class SimulatedObdAdapter : IObdAdapter
     /// <summary>Inverts each registry formula so the simulator emits bytes the decoder will read back as <paramref name="value"/>.</summary>
     private static byte[] EncodeValue(PidDefinition def, double value)
     {
-        static byte Clamp(double d) => (byte)Math.Clamp(Math.Round(d), 0, 255);
-        static byte[] Word(double d)
-        {
-            var raw = (int)Math.Clamp(Math.Round(d), 0, 65535);
-            return [(byte)(raw >> 8), (byte)(raw & 0xFF)];
-        }
-
         return def.Pid switch
         {
-            0x04 or 0x11 or 0x2F => [Clamp(value * 255.0 / 100.0)],
-            0x05 or 0x0F or 0x46 or 0x5C => [Clamp(value + 40)],
-            0x06 or 0x07 or 0x08 or 0x09 => [Clamp(value * 128.0 / 100.0 + 128)],
-            0x0B or 0x0D => [Clamp(value)],
-            0x0E => [Clamp((value + 64) * 2)],
-            0x0C => Word(value * 4),
-            0x10 => Word(value * 100),
-            0x14 or 0x15 => [Clamp(value * 200), 0xFF],
-            0x1F or 0x21 => Word(value),
-            0x42 => Word(value * 1000),
-            0x43 => Word(value * 255.0 / 100.0),
-            0x44 => Word(value * 32768),
-            0x5E => Word(value * 20),
+            0x04 or 0x11 or 0x2F => [Clamp8(value * 255.0 / 100.0)],
+            0x05 or 0x0F or 0x46 or 0x5C => [Clamp8(value + 40)],
+            0x06 or 0x07 or 0x08 or 0x09 => [Clamp8(value * 128.0 / 100.0 + 128)],
+            0x0B or 0x0D => [Clamp8(value)],
+            0x0E => [Clamp8((value + 64) * 2)],
+            0x0C => Word16(value * 4),
+            0x10 => Word16(value * 100),
+            0x14 or 0x15 => [Clamp8(value * 200), 0xFF],
+            0x1F or 0x21 => Word16(value),
+            0x42 => Word16(value * 1000),
+            0x43 => Word16(value * 255.0 / 100.0),
+            0x44 => Word16(value * 32768),
+            0x5E => Word16(value * 20),
             _ => new byte[def.ByteCount]
         };
+    }
+
+    private static byte Clamp8(double d) => (byte)Math.Clamp(Math.Round(d), 0, 255);
+
+    private static byte[] Word16(double d)
+    {
+        var raw = (int)Math.Clamp(Math.Round(d), 0, 65535);
+        return [(byte)(raw >> 8), (byte)(raw & 0xFF)];
     }
 
     /// <summary>Applies the configured misbehaviour to an otherwise-correct reply.</summary>

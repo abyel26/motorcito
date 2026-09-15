@@ -31,6 +31,15 @@ public sealed class Elm327Options
 }
 
 /// <summary>
+/// Per-call override of timeout and retries.
+///
+/// An identifier sweep sends tens of thousands of requests, most of which the
+/// ECU refuses or ignores. With the session defaults a silent identifier costs
+/// three attempts at 1.5 s each; a sweep wants one short attempt instead.
+/// </summary>
+public sealed record RequestOptions(TimeSpan Timeout, int MaxRetries);
+
+/// <summary>
 /// Speaks ELM327 over any <see cref="IObdAdapter"/>.
 ///
 /// This is where protocol knowledge lives — command strings, the init sequence,
@@ -58,6 +67,14 @@ public sealed class Elm327Session
     }
 
     /// <summary>
+    /// The CAN header the adapter is currently transmitting on, or null when it
+    /// is not known — before initialisation, or after an <c>ATSH</c> the
+    /// adapter did not acknowledge. Unknown forces the next header change to be
+    /// sent rather than assumed.
+    /// </summary>
+    public string? CurrentHeader { get; private set; }
+
+    /// <summary>
     /// The initialisation sequence from <c>docs/PID-REFERENCE.md</c>, in order.
     ///
     /// Failures here are not fatal on their own: clones routinely NAK a command
@@ -77,6 +94,7 @@ public sealed class Elm327Session
 
         var acknowledged = new List<string>();
         var ignored = new List<string>();
+        var adapterReset = false;
 
         foreach (var (command, _) in steps)
         {
@@ -89,6 +107,11 @@ public sealed class Elm327Session
                 var raw = await _adapter.SendCommandAsync(command, timeout, ct).ConfigureAwait(false);
                 var response = Elm327Response.Parse(raw, command);
 
+                // The banner is not hex or OK, so ATZ never counts as
+                // acknowledged — but any reply at all means the reset happened.
+                if (command == "ATZ" && !string.IsNullOrWhiteSpace(raw))
+                    adapterReset = true;
+
                 if (response.Status is Elm327Status.Ok or Elm327Status.Data)
                     acknowledged.Add(command);
                 else
@@ -100,6 +123,11 @@ public sealed class Elm327Session
             }
         }
 
+        // A reset restores the adapter's default functional header. Without one
+        // the header is unknown, so the next addressed batch sends ATSH rather
+        // than assuming.
+        CurrentHeader = adapterReset ? SignalRequest.FunctionalHeader : null;
+
         return new InitResult(acknowledged, ignored);
     }
 
@@ -110,11 +138,17 @@ public sealed class Elm327Session
     /// and on a clone doing ~10 queries/sec, retrying dead PIDs is the
     /// difference between a usable sample rate and an unusable one.
     /// </summary>
-    public async Task<Elm327Response> SendAsync(string command, CancellationToken ct = default)
+    public Task<Elm327Response> SendAsync(string command, CancellationToken ct = default)
+        => SendAsync(command, options: null, ct);
+
+    /// <inheritdoc cref="SendAsync(string, CancellationToken)"/>
+    /// <param name="options">Overrides the session's timeout and retry count for this call.</param>
+    public async Task<Elm327Response> SendAsync(string command, RequestOptions? options, CancellationToken ct = default)
     {
         Elm327Response response = Elm327Response.Parse(string.Empty);
+        var maxRetries = options?.MaxRetries ?? _options.MaxRetries;
 
-        for (var attempt = 0; attempt <= _options.MaxRetries; attempt++)
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
             if (attempt > 0)
                 await Task.Delay(_options.RetryDelay, ct).ConfigureAwait(false);
@@ -122,8 +156,11 @@ public sealed class Elm327Session
             // Until the bus has answered once, allow for protocol negotiation.
             // ATSP0 selects auto-detection but does not perform it; the search
             // happens on this first real request and takes far longer than a
-            // steady-state read.
-            var timeout = _busHasAnswered ? _options.CommandTimeout : _options.FirstRequestTimeout;
+            // steady-state read. A short per-call timeout does not override
+            // that — it would fail the very first request on a healthy car.
+            var timeout = _busHasAnswered
+                ? options?.Timeout ?? _options.CommandTimeout
+                : Max(options?.Timeout ?? TimeSpan.Zero, _options.FirstRequestTimeout);
 
             try
             {
@@ -147,6 +184,66 @@ public sealed class Elm327Session
         }
 
         return response;
+    }
+
+    /// <summary>
+    /// Points subsequent requests at one ECU, e.g. "7E0" for the engine.
+    ///
+    /// Skips the round trip when the adapter is already on that header, so a
+    /// batch of reads to one ECU costs a single <c>ATSH</c>.
+    /// </summary>
+    /// <returns>False if the adapter did not acknowledge; the header is then unknown.</returns>
+    public async Task<bool> SetHeaderAsync(string header, CancellationToken ct = default)
+    {
+        if (!SignalRequest.IsElevenBitHeader(header))
+            throw new ArgumentException($"'{header}' is not an 11-bit CAN header (000–7FF).", nameof(header));
+
+        header = header.ToUpperInvariant();
+        if (header == CurrentHeader)
+            return true;
+
+        var command = $"ATSH{header}";
+        try
+        {
+            var raw = await _adapter.SendCommandAsync(command, _options.CommandTimeout, ct).ConfigureAwait(false);
+            if (Elm327Response.Parse(raw, command).Status == Elm327Status.Ok)
+            {
+                CurrentHeader = header;
+                return true;
+            }
+        }
+        catch (ObdTimeoutException)
+        {
+        }
+
+        CurrentHeader = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns to the functional broadcast header. Must follow any addressed
+    /// batch: standard Mode 01 polling expects every ECU to hear its requests.
+    /// </summary>
+    public Task<bool> RestoreFunctionalHeaderAsync(CancellationToken ct = default)
+        => SetHeaderAsync(SignalRequest.FunctionalHeader, ct);
+
+    /// <summary>
+    /// Sends one addressed read and classifies the reply as an answer, a
+    /// refusal, or silence.
+    ///
+    /// Leaves the adapter on <see cref="SignalRequest.Header"/>; callers
+    /// batching reads restore the functional header once at the end.
+    /// </summary>
+    /// <exception cref="ServiceNotAllowedException">The request is not a read.</exception>
+    public async Task<UdsResponse> ReadIdentifierAsync(SignalRequest request, RequestOptions? options = null, CancellationToken ct = default)
+    {
+        ReadOnlyServicePolicy.EnsureAllowed(request.Service);
+
+        if (!await SetHeaderAsync(request.Header, ct).ConfigureAwait(false))
+            return new UdsResponse(UdsOutcome.NoResponse, [], null, Elm327Status.NotUnderstood);
+
+        var response = await SendAsync(request.Command, options, ct).ConfigureAwait(false);
+        return UdsResponse.Parse(response, request);
     }
 
     /// <summary>Reads one live parameter.</summary>
@@ -210,6 +307,8 @@ public sealed class Elm327Session
         var response = await SendAsync(command, ct).ConfigureAwait(false);
         return DtcDecoder.Decode(response, mode);
     }
+
+    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
 }
 
 /// <param name="Ignored">Init commands the adapter did not acknowledge. Informational — clones frequently ignore some and still work.</param>
