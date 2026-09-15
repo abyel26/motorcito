@@ -73,7 +73,7 @@
                 <Border.StrokeShape>
                     <RoundRectangle CornerRadius="12" />
                 </Border.StrokeShape>
-                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
+                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="4">
                     <Label Grid.Row="0" Grid.ColumnSpan="2" Text="VEHICLE" FontSize="11"
                            TextColor="#6E8B7E" CharacterSpacing="1.5" Margin="0,0,0,4" />
 
@@ -88,6 +88,16 @@
                          able to tell at a glance that trips are being recorded. -->
                     <Label Grid.Row="3" Grid.Column="0" Text="Trip" TextColor="#8FA99A" FontSize="13" />
                     <Label Grid.Row="3" Grid.Column="1" Text="{Binding TripStatus}" TextColor="White" FontSize="13" />
+
+                    <!-- Where the oil gauge's value comes from, or why it has none,
+                         so an "n/a" dial always has an explanation beside it. -->
+                    <Label Grid.Row="4" Grid.Column="0" Text="Oil temp" TextColor="#8FA99A" FontSize="13" />
+                    <Label Grid.Row="4" Grid.Column="1" Text="{Binding OilTempSource}" TextColor="White" FontSize="13" />
+
+                    <!-- Required credit for catalog data in use; hidden when none is. -->
+                    <Label Grid.Row="5" Grid.ColumnSpan="2" Text="{Binding SignalAttribution}"
+                           IsVisible="{Binding HasSignalAttribution}"
+                           TextColor="#6E8B7E" FontSize="11" Margin="0,4,0,0" />
                 </Grid>
             </Border>
 

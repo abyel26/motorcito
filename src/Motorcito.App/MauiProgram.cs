@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Logging;
 using Motorcito.Data;
 using Motorcito.Obd;
+using Motorcito.Obd.Signals;
 using Motorcito.Obd.Testing;
+using Motorcito.Profiles.Obdb;
 
 namespace Motorcito.App;
 
@@ -33,6 +35,11 @@ public static class MauiProgram
 		builder.Services.AddSingleton<IObdAdapter>(sp => new LoggingObdAdapter(
 			CreateAdapter(),
 			sp.GetRequiredService<LoggingService>().ObdLog));
+		// Manufacturer-specific signal catalogs. Each is optional and removable:
+		// deleting a registration leaves every car with standard OBD data. To
+		// remove OBDb entirely, follow src/Motorcito.Profiles.Obdb/SOURCES.md.
+		builder.Services.AddSingleton<ISignalProfileSource, ObdbProfileSource>();
+
 		builder.Services.AddSingleton<LiveDataViewModel>();
 		builder.Services.AddTransient<MainPage>();
 
@@ -77,12 +84,10 @@ public static class MauiProgram
 			return new Platforms.iOS.ExternalAccessoryObdAdapter();
 #endif
 
-		// A 2021-ish inline-six: no bank 2 trims, no oil temp. Quirks are set to
-		// clone grade deliberately — if the UI only looks right against a
-		// perfect adapter, it is not finished.
-		return new SimulatedObdAdapter(
-			name: "Simulated Vehicle (BMW M3 G80)",
-			quirks: SimulatorQuirks.CheapClone,
-			storedDtcs: ["P0171"]);
+		// A car whose oil temperature is only reachable through a manufacturer
+		// read, so the simulator exercises the same path real consumer cars need.
+		// Quirks are clone grade deliberately — if the UI only looks right against
+		// a perfect adapter, it is not finished.
+		return SimulatedObdAdapter.MazdaMx5Nd(SimulatorQuirks.CheapClone);
 	}
 }

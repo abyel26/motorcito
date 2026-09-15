@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Motorcito.App.Controls;
+using Motorcito.Obd.Signals;
 
 namespace Motorcito.App;
 
@@ -20,6 +21,15 @@ public partial class MainPage : ContentPage
     /// string allocation plus a layout pass across the whole list.
     /// </summary>
     private const int TextEveryNFrames = 4;
+
+    /// <summary>
+    /// For hero gauges whose standard PID many cars lack, the canonical signal a
+    /// manufacturer-specific read can supply instead.
+    /// </summary>
+    private static readonly Dictionary<byte, string> ExtendedFallbacks = new()
+    {
+        [0x5C] = CanonicalSignals.OilTemp.Key,
+    };
 
     private readonly LiveDataViewModel _viewModel;
     private IDispatcherTimer? _ticker;
@@ -113,8 +123,21 @@ public partial class MainPage : ContentPage
 
         if (item is null)
         {
+            // Standard OBD does not report it on this car. A manufacturer read
+            // the car answered plausibly at connect may still supply it.
+            if (ExtendedFallbacks.TryGetValue(pid, out var key) && _viewModel.IsSignalVerified(key))
+            {
+                gauge.SetUnsupported(false);
+                if (_viewModel.ExtendedValue(key) is { } extended)
+                {
+                    gauge.SetReading(extended);
+                    gauge.SetStale(false);
+                }
+                return;
+            }
+
             // No gauge model means either no connection yet, or a connected car
-            // whose capability scan did not report this PID. Those are
+            // that offers this value by no means the app knows. Those are
             // different facts and the dial must not present them identically.
             gauge.SetUnsupported(_viewModel.IsConnected);
             return;

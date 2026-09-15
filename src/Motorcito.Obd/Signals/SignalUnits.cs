@@ -40,6 +40,11 @@ public static class SignalUnits
         if (string.Equals(from, to, StringComparison.Ordinal))
             return value;
 
+        // Sources describe plain numbers inconsistently — "scalar", "count", or
+        // no unit at all. They are the same thing, and nothing is being converted.
+        if (from is None or Count && to is None or Count)
+            return value;
+
         return (from, to) switch
         {
             (Fahrenheit, Celsius) => (value - 32) * 5.0 / 9.0,

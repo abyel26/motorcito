@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Motorcito.App.Controls;
 using Motorcito.Data;
 using Motorcito.Obd;
+using Motorcito.Obd.Signals;
 
 namespace Motorcito.App;
 
@@ -66,6 +67,8 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
     private readonly IObdAdapter _adapter;
     private readonly LoggingService _logging;
     private readonly GeolocationAltitudeProvider _altitude;
+    private readonly IReadOnlyList<ISignalProfileSource> _sources;
+    private readonly HashSet<string> _verifiedSignalKeys = [];
     private CancellationTokenSource? _pollingCts;
     private Task? _pollingTask;
 
@@ -79,16 +82,27 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
     private string _dtcSummary = "—";
     private string _tripStatus = "Not recording";
     private string _diagnosticSummary = "—";
+    private string _oilTempSource = "—";
+    private string _signalAttribution = string.Empty;
     private bool _isBusy;
     private ObdSnapshot? _latest;
 
     public ObservableCollection<GaugeItem> Gauges { get; } = [];
 
-    public LiveDataViewModel(IObdAdapter adapter, LoggingService logging, GeolocationAltitudeProvider altitude)
+    /// <param name="sources">
+    /// Manufacturer-specific signal catalogs. May be empty: every car still gets
+    /// standard OBD data, and a catalog can be removed without touching this type.
+    /// </param>
+    public LiveDataViewModel(
+        IObdAdapter adapter,
+        LoggingService logging,
+        GeolocationAltitudeProvider altitude,
+        IEnumerable<ISignalProfileSource> sources)
     {
         _adapter = adapter;
         _logging = logging;
         _altitude = altitude;
+        _sources = sources.ToList();
         _adapter.StateChanged += (_, state) => MainThread.BeginInvokeOnMainThread(
             () => Status = state.ToString());
     }
@@ -104,6 +118,28 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
     public string TripStatus { get => _tripStatus; private set => Set(ref _tripStatus, value); }
     public string DiagnosticSummary { get => _diagnosticSummary; private set => Set(ref _diagnosticSummary, value); }
     public bool IsBusy { get => _isBusy; private set => Set(ref _isBusy, value); }
+
+    /// <summary>Where oil temperature comes from on this car, or why it is unavailable.</summary>
+    public string OilTempSource { get => _oilTempSource; private set => Set(ref _oilTempSource, value); }
+
+    /// <summary>Credit required by the catalogs whose definitions are in use. Empty when none are.</summary>
+    public string SignalAttribution
+    {
+        get => _signalAttribution;
+        private set
+        {
+            Set(ref _signalAttribution, value);
+            OnPropertyChanged(nameof(HasSignalAttribution));
+        }
+    }
+
+    public bool HasSignalAttribution => SignalAttribution.Length > 0;
+
+    /// <summary>Whether this car answered a manufacturer read for <paramref name="key"/> plausibly at connect.</summary>
+    public bool IsSignalVerified(string key) => _verifiedSignalKeys.Contains(key);
+
+    /// <summary>The latest verified manufacturer-specific value for a canonical key, if any.</summary>
+    public double? ExtendedValue(string key) => Latest?.ExtendedValue(key);
 
     public bool IsConnected => _adapter.State == ObdConnectionState.Connected;
 
@@ -169,7 +205,10 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
                 MainThread.BeginInvokeOnMainThread(() => TripStatus = FormatEndedTrip(trip));
             };
 
-            var poller = new ObdPoller(session, supported);
+            // Before polling starts, so the probe has the adapter to itself.
+            var extended = await ProbeGapsAsync(session, supported);
+
+            var poller = new ObdPoller(session, supported, extendedCommands: extended);
             poller.SnapshotUpdated += OnSnapshot;
 
             _pollingCts = new CancellationTokenSource();
@@ -184,6 +223,65 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
             IsBusy = false;
             OnPropertyChanged(nameof(IsConnected));
         }
+    }
+
+    /// <summary>
+    /// Fills gaps standard OBD leaves on this car with manufacturer-specific
+    /// reads — but only reads this car has just answered with plausible values.
+    ///
+    /// Today the one gap a hero gauge needs filled is oil temperature. The
+    /// per-signal diagnostics card, and the rest of the vocabulary, arrive with
+    /// the full catalog work.
+    /// </summary>
+    private async Task<IReadOnlyList<SignalCommand>> ProbeGapsAsync(Elm327Session session, SupportedPids supported)
+    {
+        _verifiedSignalKeys.Clear();
+        SignalAttribution = string.Empty;
+
+        if (supported.IsSupported(0x5C))
+        {
+            OilTempSource = "Standard OBD";
+            return [];
+        }
+
+        // Make and year from the VIN when the car returns one. Without it every
+        // catalog definition is a candidate; read-only requests make a wrong
+        // guess cost a refusal, and the car's answers decide.
+        var vin = VinInfo.Parse(Vin);
+        var identity = new VehicleIdentity(vin?.Vin, vin?.Make, null, vin?.ModelYear);
+
+        var candidates = _sources
+            .SelectMany(s => s.CommandsFor(identity))
+            .Where(c => c.Signals.Any(s => s.CanonicalKey == CanonicalSignals.OilTemp.Key))
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            OilTempSource = "Not available for this car";
+            return [];
+        }
+
+        var results = await SignalProbe.ProbeAsync(session, candidates);
+        var verified = results.FirstOrDefault(r => r.State == ProbeState.Verified);
+
+        if (verified is null)
+        {
+            OilTempSource = $"Not available — {results[0].Describe()}";
+            return [];
+        }
+
+        foreach (var signal in verified.Signals)
+        {
+            if (signal.Reading is { } reading)
+                _verifiedSignalKeys.Add(reading.Key);
+        }
+
+        OilTempSource = $"Manufacturer read ({verified.Command})";
+        SignalAttribution = _sources.FirstOrDefault(s => s.SourceId == verified.Command.SourceId)?.Attribution ?? string.Empty;
+
+        // One source per value: a second verified definition would only cost
+        // another round trip for the same number.
+        return [verified.Command];
     }
 
     public async Task DisconnectAsync()
@@ -216,6 +314,9 @@ public sealed class LiveDataViewModel : INotifyPropertyChanged
         // Drop the last snapshot too, or the render ticker keeps pumping a
         // disconnected car's final readings into the gauges.
         Volatile.Write(ref _latest, null);
+
+        // Verification is per connection: the next car may not answer the same reads.
+        _verifiedSignalKeys.Clear();
 
         SampleRate = "—";
         OnPropertyChanged(nameof(IsConnected));

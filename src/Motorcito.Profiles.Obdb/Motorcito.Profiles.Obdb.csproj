@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OBDb community signal definitions, isolated so they can be removed.
+    Nothing outside this project knows OBDb exists: it plugs in through
+    Motorcito.Obd's ISignalProfileSource. See SOURCES.md for attribution and
+    the removal checklist.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Vendored unmodified; licensed CC BY-SA 4.0 (see SOURCES.md). -->
+    <EmbeddedResource Include="Signalsets\*.json"
+                      LogicalName="Motorcito.Profiles.Obdb.Signalsets.%(Filename)%(Extension)" />
+    <None Include="SOURCES.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Motorcito.Obd\Motorcito.Obd.csproj" />
+  </ItemGroup>
+
+</Project>

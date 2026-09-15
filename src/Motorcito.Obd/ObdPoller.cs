@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Motorcito.Obd.Signals;
 
 namespace Motorcito.Obd;
 
@@ -20,15 +21,27 @@ public sealed class PollerOptions
 
     /// <summary>Idle time between cycles. Zero polls as fast as the adapter allows.</summary>
     public TimeSpan CycleDelay { get; init; } = TimeSpan.Zero;
+
+    /// <summary>
+    /// Floor on how often a manufacturer-specific command is re-read, whatever
+    /// its source suggests. Each one costs a header change on top of the read,
+    /// and none of the values it carries change faster than this matters.
+    /// </summary>
+    public TimeSpan MinimumExtendedInterval { get; init; } = TimeSpan.FromSeconds(1);
 }
 
 /// <summary>A snapshot of every parameter read so far, replaced wholesale on each cycle.</summary>
+/// <param name="Extended">Verified manufacturer-specific values, keyed by canonical key plus qualifier. Empty when none.</param>
 public sealed record ObdSnapshot(
     DateTime TimestampUtc,
     IReadOnlyDictionary<byte, PidReading> Readings,
-    double SamplesPerSecond)
+    double SamplesPerSecond,
+    IReadOnlyDictionary<string, SignalReading>? Extended = null)
 {
     public double? Value(byte pid) => Readings.TryGetValue(pid, out var r) ? r.Value : null;
+
+    public double? ExtendedValue(string key)
+        => Extended is not null && Extended.TryGetValue(key, out var r) ? r.Value : null;
 }
 
 /// <summary>
@@ -48,6 +61,8 @@ public sealed class ObdPoller
     private readonly Dictionary<byte, PidReading> _latest = [];
     private readonly Dictionary<byte, int> _consecutiveFailures = [];
     private readonly HashSet<byte> _dropped = [];
+    private readonly List<ExtendedState> _extended;
+    private readonly Dictionary<string, SignalReading> _latestExtended = [];
 
     /// <summary>Raised after each completed cycle with the current values.</summary>
     public event EventHandler<ObdSnapshot>? SnapshotUpdated;
@@ -55,7 +70,15 @@ public sealed class ObdPoller
     /// <summary>PIDs abandoned because they repeatedly failed despite being advertised as supported.</summary>
     public IReadOnlySet<byte> DroppedPids => _dropped;
 
-    public ObdPoller(Elm327Session session, SupportedPids supported, PollerOptions? options = null)
+    /// <param name="extendedCommands">
+    /// Manufacturer-specific commands to poll alongside Mode 01. Pass only
+    /// commands this car has already answered plausibly — see <see cref="SignalProbe"/>.
+    /// </param>
+    public ObdPoller(
+        Elm327Session session,
+        SupportedPids supported,
+        PollerOptions? options = null,
+        IEnumerable<SignalCommand>? extendedCommands = null)
     {
         _session = session;
         _options = options ?? new PollerOptions();
@@ -64,10 +87,22 @@ public sealed class ObdPoller
         _rotation = supported.KnownSupported()
             .OrderBy(d => d.Poll)
             .ToList();
+
+        _extended = (extendedCommands ?? [])
+            .Where(c => c.IsSendable)
+            .Select(c => new ExtendedState(
+                c,
+                c.ToRequest(),
+                TimeSpan.FromSeconds(Math.Max(c.IntervalSeconds, _options.MinimumExtendedInterval.TotalSeconds))))
+            .ToList();
     }
 
     /// <summary>The PIDs this poller will actually read, in cycle order.</summary>
     public IReadOnlyList<PidDefinition> Rotation => _rotation;
+
+    /// <summary>Manufacturer-specific commands still being polled.</summary>
+    public IReadOnlyList<SignalCommand> ExtendedCommands
+        => _extended.Where(s => !s.Dropped).Select(s => s.Command).ToList();
 
     /// <summary>
     /// Runs until cancelled. Cancellation is the normal exit path — trips end by
@@ -121,6 +156,9 @@ public sealed class ObdPoller
                 }
             }
 
+            if (!cancellationToken.IsCancellationRequested)
+                readsThisSecond += await PollExtendedAsync(clock.Elapsed, cancellationToken).ConfigureAwait(false);
+
             // Recompute the achieved rate about once a second. The roadmap wants
             // this on screen: it is the fastest way to tell a struggling adapter
             // from a struggling app.
@@ -135,7 +173,8 @@ public sealed class ObdPoller
             SnapshotUpdated?.Invoke(this, new ObdSnapshot(
                 DateTime.UtcNow,
                 new Dictionary<byte, PidReading>(_latest),
-                samplesPerSecond));
+                samplesPerSecond,
+                new Dictionary<string, SignalReading>(_latestExtended)));
 
             cycle++;
 
@@ -153,6 +192,77 @@ public sealed class ObdPoller
         }
     }
 
+    /// <summary>
+    /// Reads whichever manufacturer-specific commands are due, grouped by
+    /// header, then returns the adapter to the functional header so the next
+    /// Mode 01 cycle reaches every ECU again.
+    /// </summary>
+    /// <returns>How many requests reached the adapter.</returns>
+    private async Task<int> PollExtendedAsync(TimeSpan now, CancellationToken ct)
+    {
+        var due = _extended
+            .Where(s => !s.Dropped && s.NextDue <= now)
+            .OrderBy(s => s.Request.Header, StringComparer.Ordinal)
+            .ToList();
+
+        if (due.Count == 0)
+            return 0;
+
+        var reads = 0;
+        try
+        {
+            foreach (var state in due)
+            {
+                if (ct.IsCancellationRequested)
+                    break;
+
+                state.NextDue = now + state.Interval;
+
+                UdsResponse response;
+                try
+                {
+                    response = await _session.ReadIdentifierAsync(state.Request, ct: ct).ConfigureAwait(false);
+                }
+                catch (ObdException)
+                {
+                    RecordFailure(state);
+                    continue;
+                }
+
+                reads++;
+
+                var plausible = SignalDecoder.Decode(state.Command, response)
+                    .Where(r => r.Check == SignalCheck.Plausible)
+                    .ToList();
+
+                // A read that stops producing plausible values is treated like a
+                // PID that stops answering: counted, then dropped. A value that
+                // was sane at connect and is now impossible is not shown.
+                if (plausible.Count == 0)
+                {
+                    RecordFailure(state);
+                    continue;
+                }
+
+                state.Failures = 0;
+                foreach (var result in plausible)
+                    _latestExtended[result.Reading!.Key] = result.Reading;
+            }
+
+            await _session.RestoreFunctionalHeaderAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObdException)
+        {
+            // Restore failed: the session marks the header unknown, and the next
+            // Mode 01 failures are counted like any other.
+        }
+
+        return reads;
+    }
+
     private bool IsDueThisCycle(PidDefinition def, long cycle) => def.Poll switch
     {
         PollClass.Fast => true,
@@ -168,5 +278,22 @@ public sealed class ObdPoller
 
         if (count >= _options.FailuresBeforeDropping)
             _dropped.Add(def.Pid);
+    }
+
+    private void RecordFailure(ExtendedState state)
+    {
+        state.Failures++;
+        if (state.Failures >= _options.FailuresBeforeDropping)
+            state.Dropped = true;
+    }
+
+    private sealed class ExtendedState(SignalCommand command, SignalRequest request, TimeSpan interval)
+    {
+        public SignalCommand Command { get; } = command;
+        public SignalRequest Request { get; } = request;
+        public TimeSpan Interval { get; } = interval;
+        public TimeSpan NextDue { get; set; } = TimeSpan.Zero;
+        public int Failures { get; set; }
+        public bool Dropped { get; set; }
     }
 }

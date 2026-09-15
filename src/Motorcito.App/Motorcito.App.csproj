@@ -61,6 +61,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Motorcito.Obd\Motorcito.Obd.csproj" />
 		<ProjectReference Include="..\Motorcito.Data\Motorcito.Data.csproj" />
+		<ProjectReference Include="..\Motorcito.Profiles.Obdb\Motorcito.Profiles.Obdb.csproj" />
 	</ItemGroup>
 
 </Project>
