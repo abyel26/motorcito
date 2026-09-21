@@ -27,7 +27,18 @@ public sealed class PollerOptions
     /// its source suggests. Each one costs a header change on top of the read,
     /// and none of the values it carries change faster than this matters.
     /// </summary>
-    public TimeSpan MinimumExtendedInterval { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan MinimumExtendedInterval { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// How many manufacturer-specific reads one cycle may spend.
+    ///
+    /// They are not free: a batch costs its reads plus two header changes, and
+    /// every one of those delays the next Mode 01 cycle. Polling a carful of
+    /// them each cycle dropped the achieved rate from about 11 reads/s to 7 and
+    /// put a visible lag in the RPM gauge. One per cycle keeps the dashboard
+    /// responsive; anything due waits its turn, oldest first.
+    /// </summary>
+    public int MaxExtendedReadsPerCycle { get; init; } = 1;
 }
 
 /// <summary>A snapshot of every parameter read so far, replaced wholesale on each cycle.</summary>
@@ -197,8 +208,12 @@ public sealed class ObdPoller
     /// <returns>How many requests reached the adapter.</returns>
     private async Task<int> PollExtendedAsync(TimeSpan now, CancellationToken ct)
     {
+        // Oldest due first, so a cycle's single slot rotates fairly, then
+        // grouped by header so a batch of two costs one header change.
         var due = _extended
             .Where(s => !s.Dropped && s.NextDue <= now)
+            .OrderBy(s => s.NextDue)
+            .Take(Math.Max(1, _options.MaxExtendedReadsPerCycle))
             .OrderBy(s => s.Request.Header, StringComparer.Ordinal)
             .ToList();
 

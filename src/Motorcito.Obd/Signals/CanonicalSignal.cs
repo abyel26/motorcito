@@ -46,15 +46,17 @@ public sealed record CanonicalSignal(
 public static class CanonicalSignals
 {
     // Engine
-    public static readonly CanonicalSignal OilTemp = new("oil_temp", "Oil temperature", SignalUnits.Celsius, -40, 160, MinimumIntervalSeconds: 2);
-    public static readonly CanonicalSignal OilPressure = new("oil_pressure", "Oil pressure", SignalUnits.Kilopascal, 0, 1000);
+    public static readonly CanonicalSignal OilTemp = new("oil_temp", "Oil temperature", SignalUnits.Celsius, -40, 160, MinimumIntervalSeconds: 5);
+    public static readonly CanonicalSignal OilPressure = new("oil_pressure", "Oil pressure", SignalUnits.Kilopascal, 0, 1000, MinimumIntervalSeconds: 5);
     public static readonly CanonicalSignal OilLife = new("oil_life", "Oil life remaining", SignalUnits.Percent, 0, 100, MinimumIntervalSeconds: 300);
     public static readonly CanonicalSignal HeadTemp = new("head_temp", "Cylinder head temperature", SignalUnits.Celsius, -40, 200, MinimumIntervalSeconds: 2);
     public static readonly CanonicalSignal CatalystTemp = new("cat_temp", "Catalyst temperature", SignalUnits.Celsius, 0, 1100, MinimumIntervalSeconds: 5);
     public static readonly CanonicalSignal MisfireCount = new("misfire_count", "Misfire count", SignalUnits.Count, 0, 65535, MinimumIntervalSeconds: 5);
-    public static readonly CanonicalSignal ThrottleDesired = new("throttle_desired", "Throttle desired", SignalUnits.Degree, 0, 90);
-    public static readonly CanonicalSignal ThrottleActual = new("throttle_actual", "Throttle actual", SignalUnits.Degree, 0, 90);
-    public static readonly CanonicalSignal FanOn = new("fan_on", "Cooling fan", SignalUnits.OnOff, 0, 1, MinimumIntervalSeconds: 5);
+    // Throttle position is already a standard PID (0x11) polled every cycle;
+    // these manufacturer angles are context, not a gauge, so they pace slowly.
+    public static readonly CanonicalSignal ThrottleDesired = new("throttle_desired", "Throttle desired", SignalUnits.Degree, 0, 90, MinimumIntervalSeconds: 5);
+    public static readonly CanonicalSignal ThrottleActual = new("throttle_actual", "Throttle actual", SignalUnits.Degree, 0, 90, MinimumIntervalSeconds: 5);
+    public static readonly CanonicalSignal FanOn = new("fan_on", "Cooling fan", SignalUnits.OnOff, 0, 1, MinimumIntervalSeconds: 10);
     public static readonly CanonicalSignal DtcCount = new("dtc_count", "Trouble codes stored", SignalUnits.Count, 0, 255, MinimumIntervalSeconds: 60);
 
     // Driveline
@@ -71,7 +73,7 @@ public static class CanonicalSignals
     public static readonly CanonicalSignal DistanceToEmpty = new("distance_to_empty", "Distance to empty", SignalUnits.Kilometre, 0, 2000, MinimumIntervalSeconds: 30);
 
     // 12 V system
-    public static readonly CanonicalSignal AlternatorVoltage = new("alternator_voltage", "Alternator output", SignalUnits.Volt, 8, 16, MinimumIntervalSeconds: 5);
+    public static readonly CanonicalSignal AlternatorVoltage = new("alternator_voltage", "Alternator output", SignalUnits.Volt, 8, 16, MinimumIntervalSeconds: 10);
     public static readonly CanonicalSignal Battery12VVoltage = new("battery_12v_voltage", "12 V battery voltage", SignalUnits.Volt, 8, 16, MinimumIntervalSeconds: 10);
     public static readonly CanonicalSignal Battery12VCharge = new("battery_12v_charge", "12 V battery charge", SignalUnits.Percent, 0, 100, MinimumIntervalSeconds: 60);
     public static readonly CanonicalSignal Battery12VTemp = new("battery_12v_temp", "12 V battery temperature", SignalUnits.Celsius, -40, 100, MinimumIntervalSeconds: 60);

@@ -196,6 +196,41 @@ public class SignalProbeTests
     }
 
     [Fact]
+    public async Task A_cycle_spends_at_most_one_round_trip_on_manufacturer_reads()
+    {
+        var (adapter, session) = await ConnectMx5();
+        await using var _ = adapter;
+        var supported = await session.ScanSupportedPidsAsync();
+
+        // Six commands all due immediately. Reading them in one cycle would
+        // delay the next Mode 01 pass — the lag this cap exists to prevent.
+        var commands = new[] { 0x1310, 0x0415, 0x091A, 0x093C, 0x16E9, 0x0202 }
+            .Select(id => Command("7E0", (ushort)id, CanonicalSignals.OilTemp.Key, divisor: 100, offset: -40, unit: SignalUnits.Celsius))
+            .ToList();
+
+        var poller = new ObdPoller(session, supported, extendedCommands: commands);
+
+        var cycles = 0;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        poller.SnapshotUpdated += (_, _) =>
+        {
+            if (++cycles >= 3)
+                cts.Cancel();
+        };
+
+        try
+        {
+            await poller.RunAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        var extendedReads = adapter.CommandLog.Count(c => c.StartsWith("22", StringComparison.Ordinal));
+        Assert.True(extendedReads <= cycles, $"{extendedReads} manufacturer reads across {cycles} cycles");
+    }
+
+    [Fact]
     public async Task A_damaged_reply_is_retried_before_a_signal_is_written_off()
     {
         await using var inner = SimulatedObdAdapter.MazdaMx5Nd(new SimulatorQuirks { Latency = TimeSpan.Zero });
